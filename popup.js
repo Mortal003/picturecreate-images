@@ -148,13 +148,40 @@
     await check();
     if (!finished && batchTasks.some(t => !["SUCCESS", "FAILURE"].includes(t.status))) pollTimer = setInterval(check, 2500);
   }
+  async function watchHfsyInBackground(key) {
+    let completed = false;
+    const sync = async () => {
+      if (completed) return true;
+      const response = await chrome.runtime.sendMessage({ type: "POLL_HFSY_NOW", apiKey: key });
+      if (!response?.ok && response?.error) { log("后台轮询暂时无法查询：" + response.error, "error"); return false; }
+      const state = await chrome.storage.local.get(["batchTasks", "activeTask", "lastResults"]);
+      if (!Array.isArray(state.batchTasks) || !state.batchTasks.length) return false;
+      batchTasks = state.batchTasks;
+      resultUrls = Array.isArray(state.lastResults) ? state.lastResults : batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url);
+      const total = batchTasks.length;
+      const done = batchTasks.filter(t => t.status === "SUCCESS").length;
+      const failed = batchTasks.filter(t => t.status === "FAILURE").length;
+      setProgress(total ? Math.round((done + failed) / total * 92) : 92);
+      $("thinking-text").textContent = "已完成 " + (done + failed) + " / " + total + " 张，成功 " + done + " 张，失败 " + failed + " 张…";
+      if (batchTasks.every(t => ["SUCCESS", "FAILURE"].includes(t.status))) {
+        completed = true;
+        resultUrls = batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url);
+        await finish("生成结束：成功 " + done + " 张，失败 " + failed + " 张。");
+        return true;
+      }
+      return false;
+    };
+    if (await sync()) return;
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => { try { if (await sync()) { clearInterval(pollTimer); pollTimer = null; } } catch (e) { log("读取后台任务状态失败：" + (e.message || "网络错误"), "error"); } }, 2500);
+  }
   async function persistHistory() {
     if (!resultUrls.length) return;
     const signature = JSON.stringify({ urls: resultUrls, prompt: $("prompt")?.value.trim() || "", provider: $("provider")?.value || "", tasks: batchTasks.map(t => t.taskId) });
     const current = await chrome.storage.local.get('lastHistoryBatchSignature');
     if (current.lastHistoryBatchSignature === signature) return;
     const now = Date.now();
-    const refsUsed = selectedRefs();
+    const refsUsed = selectedRefs().length ? selectedRefs() : [...new Set(batchTasks.map(t => t.referenceImage).filter(Boolean))];
     const promptText = $("prompt")?.value.trim() || "";
     const entries = resultUrls.map((url, index) => ({
       id: now + '-' + index,
@@ -177,7 +204,7 @@
   function renderHistory() { const list = $("history-list"); list.innerHTML = history.length ? history.slice().reverse().map(x => '<div class="history-item"><img src="' + x.url + '"><div><p>' + String(x.prompt || "").replaceAll("<", "&lt;") + '</p><time>' + new Date(x.createdAt).toLocaleString() + '</time></div><a target="_blank" href="' + x.url + '">打开</a></div>').join("") : '<p class="muted">暂无生成记录</p>'; }
   async function chooseFolder() { if (!window.showDirectoryPicker) return status("当前浏览器不支持选择文件夹，将保存到下载目录。", true); try { directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" }); await persistHandle(directoryHandle); $("folder-status").textContent = "已选择本地文件夹，生成后直接保存"; status("本地文件夹已授权并持久化。"); } catch (e) { if (e.name !== "AbortError") status("选择文件夹失败：" + e.message, true); } }
   function bind() { $("refresh").onclick = scanImages; $("rescan").onclick = scanImages; $("filter-placeholders").onchange = scanImages; $("generate").onclick = generate; $("prompt").oninput = updateButton; $("api-key").oninput = updateButton; $("upload-custom").onclick = () => $("custom-images").click(); $("custom-images").onchange = async e => { const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); }))); customImages.push(...added); customImages = customImages.slice(-30); e.target.value = ""; renderImages(); status("已添加本地参考图 " + added.length + " 张，请在列表中选择。"); }; $("choose-folder").onclick = chooseFolder; $("download-all").onclick = () => saveBatch(true); $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); }; $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); }; document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value })); $("provider").onchange = () => { chrome.storage.local.set({ provider: $("provider").value }); $("custom-provider-panel").open = $("provider").value === "custom"; }; $("save-custom-provider").onclick = () => { chrome.storage.local.set({ customBaseUrl:$("custom-base-url").value, customGeneratePath:$("custom-generate-path").value, customQueryPath:$("custom-query-path").value, customModel:$("custom-model").value, customMode:$("custom-mode").value }); status("自定义中转站配置已保存。"); }; }
-  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customMode", "activeTask", "batchTasks"], async s => { $("api-key").value = s.apiKey || ""; $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-provider-panel").open=$("provider").value==="custom"; const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls)){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (resultUrls.length) renderResults(); bind(); updateButton(); scanImages(); const recoverable = s.activeTask?.batch && Array.isArray(s.batchTasks) && s.batchTasks.length && $("api-key").value.trim(); if (recoverable) { const unresolved = s.batchTasks.some(t => !["SUCCESS","FAILURE"].includes(t.status)); if (unresolved) { batchTasks=s.batchTasks; thinking(true); status("正在恢复未完成的中转站任务…"); await pollHfsy($("api-key").value.trim()); } else { await chrome.storage.local.set({ activeTask: null }); log("上一批中转站任务已结束，已清理恢复状态。"); } } });
+  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customMode", "activeTask", "batchTasks"], async s => { $("api-key").value = s.apiKey || ""; $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-provider-panel").open=$("provider").value==="custom"; const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls)){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (resultUrls.length) renderResults(); bind(); updateButton(); scanImages(); const recoverable = s.activeTask?.batch && Array.isArray(s.batchTasks) && s.batchTasks.length && $("api-key").value.trim(); if (recoverable) { const unresolved = s.batchTasks.some(t => !["SUCCESS","FAILURE"].includes(t.status)); if (unresolved) { batchTasks=s.batchTasks; thinking(true); status("正在恢复未完成的中转站任务…"); await watchHfsyInBackground($("api-key").value.trim()); } else { batchTasks=s.batchTasks; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : s.batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url); if (resultUrls.length || s.activeTask?.status === "COMPLETE") { thinking(true); await finish("后台任务已完成：成功 " + resultUrls.length + " 张，失败 " + s.batchTasks.filter(t => t.status === "FAILURE").length + " 张。"); } else { await chrome.storage.local.set({ activeTask: null }); log("上一批中转站任务已结束，已清理恢复状态。"); } } } });
   pollHfsy = pollHfsySafe;
   setTimeout(() => importLocalHistory().then(() => renderHistory()), 1200);
   const legacyGenerate = generate;
@@ -194,13 +221,13 @@
         const d = await r.json();
         const raw = d.result_url || d.data?.result_url || d.data?.[0]?.url || d.output?.url || d.output?.[0]?.url || d.images?.[0]?.url || d.data?.[0]?.b64_json || d.data?.[0]?.b64_data || '';
         const u = typeof raw === 'string' && (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)) ? raw : (raw ? 'data:image/png;base64,' + raw : '');
-        if (r.ok && u) { resultUrls.push(u); setProgress(Math.min(92, Math.round(resultUrls.length / refsNow.length * 92))); $("thinking-text").textContent = "已完成 " + resultUrls.length + " / " + refsNow.length + " 张，继续生成中…"; continue; }
+        if (r.ok && u) { resultUrls.push(u); batchTasks.push({taskId:'direct-'+(batchTasks.length+1), status:'SUCCESS', url:u, referenceImage:ref}); setProgress(Math.min(92, Math.round(resultUrls.length / refsNow.length * 92))); $("thinking-text").textContent = "已完成 " + resultUrls.length + " / " + refsNow.length + " 张，继续生成中…"; continue; }
         const id = d.task_id || d.id || d.data?.task_id;
         if (r.ok && id) { batchTasks.push({taskId:id, status:'QUEUED', referenceImage:ref}); continue; }
         failedNow++; batchTasks.push({taskId:'direct-'+(batchTasks.length+1), status:'FAILURE', error:d.error?.message || d.message || ('HTTP '+r.status), referenceImage:ref}); log('单张图片生成失败：'+(d.error?.message || d.message || ('HTTP '+r.status)), 'error');
       } catch (e) { failedNow++; batchTasks.push({taskId:'direct-'+(batchTasks.length+1), status:'FAILURE', error:e.message || '网络错误', referenceImage:ref}); log('单张图片请求异常：'+(e.message || '网络错误'), 'error'); }
     }
-    if (batchTasks.length) { await chrome.storage.local.set({activeTask:{batch:true}, batchTasks}); await pollHfsySafe(keyNow); }
+    if (batchTasks.length) { await chrome.storage.local.set({activeTask:{batch:true, provider:"hfsy", startedAt:Date.now(), status:"POLLING", resultUrls:[...resultUrls]}, batchTasks}); await chrome.runtime.sendMessage({ type:"START_HFSY_POLL", apiKey:keyNow }); await watchHfsyInBackground(keyNow); }
     else await finish('生成结束：成功 '+resultUrls.length+' 张，失败 '+failedNow+' 张。');
     $('generate').disabled = false;
   };
