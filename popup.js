@@ -152,8 +152,21 @@
     let completed = false;
     const sync = async () => {
       if (completed) return true;
-      const response = await chrome.runtime.sendMessage({ type: "POLL_HFSY_NOW", apiKey: key });
-      if (!response?.ok && response?.error) { log("后台轮询暂时无法查询：" + response.error, "error"); return false; }
+      let response;
+      try {
+        response = await chrome.runtime.sendMessage({ type: "POLL_HFSY_NOW", apiKey: key });
+      } catch (e) {
+        log("后台轮询连接失败，改用当前窗口继续查询：" + (e.message || "Failed to fetch"), "error");
+        completed = true;
+        await pollHfsySafe(key);
+        return true;
+      }
+      if (!response?.ok) {
+        log("后台轮询暂时无法查询，改用当前窗口继续查询：" + (response?.error || "后台未返回状态"), "error");
+        completed = true;
+        await pollHfsySafe(key);
+        return true;
+      }
       const state = await chrome.storage.local.get(["batchTasks", "activeTask", "lastResults"]);
       if (!Array.isArray(state.batchTasks) || !state.batchTasks.length) return false;
       batchTasks = state.batchTasks;

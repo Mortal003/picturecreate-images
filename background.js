@@ -72,7 +72,8 @@ async function appendExecutionLog(message, level = "info") {
 }
 
 async function ensureHfsyAlarm() {
-  try { await chrome.alarms.create(HFSY_POLL_ALARM, { delayInMinutes: 0.1, periodInMinutes: 1 }); } catch (e) { console.warn("无法创建后台轮询 alarm", e); }
+  if (!chrome.alarms?.create) return false;
+  try { await chrome.alarms.create(HFSY_POLL_ALARM, { delayInMinutes: 0.1, periodInMinutes: 1 }); return true; } catch (e) { console.warn("无法创建后台轮询 alarm", e); return false; }
 }
 
 async function pollPendingHfsyTasks(message = {}) {
@@ -135,8 +136,8 @@ async function pollPendingHfsyTasks(message = {}) {
   try { return await hfsyPollPromise; } finally { hfsyPollPromise = null; }
 }
 
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === HFSY_POLL_ALARM) pollPendingHfsyTasks(); });
-chrome.runtime.onStartup.addListener(() => pollPendingHfsyTasks());
+if (chrome.alarms?.onAlarm) chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === HFSY_POLL_ALARM) pollPendingHfsyTasks(); });
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => pollPendingHfsyTasks());
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "OPEN_SIDE_PANEL") {
