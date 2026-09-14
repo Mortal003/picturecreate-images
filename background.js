@@ -1,4 +1,5 @@
 const HFSY_POLL_ALARM = "hfsy-task-poll";
+const HFSY_GENERATE_URL = "https://www.hfsyapi.cn/v1/images/generations";
 const HFSY_QUERY_URL = "https://www.hfsyapi.cn/v1/images/generations/";
 let hfsyPollPromise = null;
 const remoteImageUrls = values => (Array.isArray(values) ? values : []).filter(value => typeof value === "string" && /^https?:\/\//i.test(value));
@@ -29,17 +30,25 @@ async function generateAgnes(message) {
 async function generateHfsy(message) {
   const tasks = [];
   for (const ref of message.referenceImages || []) {
-    const data = await parseResponse(await fetch("https://www.hfsyapi.cn/v1/images/generations/async", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "gpt-image-2", prompt: message.prompt, size: message.size, response_format: "b64_json", reference_images: [ref] }) }));
-    tasks.push(data.task_id || data.id);
+    const data = await parseResponse(await fetch(HFSY_GENERATE_URL, { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "gpt-image-2", prompt: message.prompt, size: message.size, response_format: "b64_json", reference_images: [ref], n: 1 }) }));
+    const direct = findImage(data);
+    if (direct) { tasks.push({ direct }); continue; }
+    const id = data.task_id || data.id || data.data?.task_id;
+    if (!id) throw new Error("hfsyapi 返回中没有图片结果或 task_id");
+    tasks.push({ id });
   }
   const urls = [];
-  for (const id of tasks) {
+  for (const task of tasks) {
+    if (task.direct) { urls.push(task.direct); continue; }
+    const id = task.id;
     const started = Date.now();
     while (Date.now() - started < 600000) {
       const data = await parseResponse(await fetch(HFSY_QUERY_URL + encodeURIComponent(id), { headers: { Authorization: "Bearer " + message.apiKey } }));
       const state = String(data.status || data.data?.status || "").toUpperCase();
-      if (state === "SUCCESS") { const url = data.result_url || data.data?.result_url; if (!url) throw new Error("任务成功但没有 result_url"); urls.push(url); break; }
-      if (state === "FAILURE") throw new Error(data.fail_reason || data.data?.fail_reason || "生成失败");
+      const image = findImage(data);
+      if (image) { urls.push(image); break; }
+      if (["SUCCESS", "SUCCEEDED", "COMPLETED", "DONE", "FINISHED"].includes(state)) throw new Error("任务成功但没有图片结果");
+      if (["FAILURE", "FAILED", "ERROR", "CANCELLED"].includes(state)) throw new Error(data.fail_reason || data.data?.fail_reason || data.message || "生成失败");
       await new Promise(resolve => setTimeout(resolve, 2500));
     }
   }

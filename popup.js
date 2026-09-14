@@ -27,10 +27,10 @@
     const state = await chrome.storage.local.get(keys);
     const update = {};
     let changed = false;
-    const lastResults = remoteImageUrls(state.lastResults);
+    const lastResults = Array.isArray(state.lastResults) ? state.lastResults : [];
     if (Array.isArray(state.lastResults) && lastResults.length !== state.lastResults.length) { update.lastResults = lastResults; changed = true; }
     if (Array.isArray(state.history)) {
-      const cleanHistory = state.history.filter(item => isRemoteImageUrl(item?.url)).map(item => ({ ...item, referenceImages: remoteImageUrls(item.referenceImages) }));
+      const cleanHistory = state.history.filter(item => item && typeof item === "object" && (item.url || item.localFile || item.status)).map(item => ({ ...item, referenceImages: Array.isArray(item.referenceImages) ? item.referenceImages : [] }));
       if (JSON.stringify(cleanHistory) !== JSON.stringify(state.history)) { update.history = cleanHistory; changed = true; }
     }
     if (Array.isArray(state.batchTasks)) {
@@ -43,8 +43,8 @@
       if (JSON.stringify(cleanTask) !== JSON.stringify(state.activeTask)) { update.activeTask = cleanTask; changed = true; }
     }
     if (state.pendingSave && typeof state.pendingSave === "object") {
-      const cleanPending = { ...state.pendingSave, urls: remoteImageUrls(state.pendingSave.urls), record: sanitizeRecord(state.pendingSave.record) };
-      if (!cleanPending.urls.length && Array.isArray(state.pendingSave.urls) && state.pendingSave.urls.length) { await chrome.storage.local.remove("pendingSave"); changed = true; }
+      const cleanPending = { ...state.pendingSave, urls: Array.isArray(state.pendingSave.urls) ? state.pendingSave.urls : [], record: sanitizeRecord(state.pendingSave.record) };
+      if (!cleanPending.urls.length && !cleanPending.inlineResultCount) { await chrome.storage.local.remove("pendingSave"); changed = true; }
       else if (JSON.stringify(cleanPending) !== JSON.stringify(state.pendingSave)) { update.pendingSave = cleanPending; changed = true; }
     }
     if (Object.keys(update).length) await chrome.storage.local.set(update);
@@ -54,7 +54,7 @@
     const provider = providerOverride || $("provider")?.value || activeProvider;
     const key = $("api-key")?.value.trim() || "";
     const payload = { provider, apiKey: key, [providerKeyName(provider)]: key, [providerModelName(provider)]: selectedProviderModel(provider) };
-    if (provider === "custom") { const custom = customConfig(); Object.assign(payload, { customBaseUrl: custom.base, customGeneratePath: custom.generatePath, customQueryPath: custom.queryPath, customModel: custom.model, customMode: custom.mode, customInputMode: custom.inputMode, customTaskIdPaths: custom.taskIdPaths, customStatusPaths: custom.statusPaths, customResultPaths: custom.resultPaths, customSuccessStates: custom.successStates, customFailureStates: custom.failureStates }); }
+    if (provider === "custom") { const custom = customConfig(); Object.assign(payload, { customProtocol: custom.protocol, customBaseUrl: custom.base, customGeneratePath: custom.generatePath, customQueryPath: custom.queryPath, customModel: custom.model, customMode: custom.mode, customInputMode: custom.inputMode, customTaskIdPaths: custom.taskIdPaths, customStatusPaths: custom.statusPaths, customResultPaths: custom.resultPaths, customSuccessStates: custom.successStates, customFailureStates: custom.failureStates }); }
     try {
       await cleanupLegacyInlineImageData();
       await chrome.storage.local.set(payload);
@@ -71,12 +71,34 @@
   }
   const storageCleanupReady = cleanupLegacyInlineImageData().catch(error => { console.warn("无法清理旧图片缓存", error); return false; });
   function providerModelOptions(provider) { if (provider === "agnes") return [["agnes-image-2.5-flash", "Agnes Image 2.5 Flash"], ["agnes-image-2.1-flash", "Agnes Image 2.1 Flash"], ["agnes-image-2.0-flash", "Agnes Image 2.0 Flash"]]; if (provider === "hfsy") return [["gpt-image-2", "GPT-image-2"], ["gpt-image-2.5", "GPT-image-2.5"]]; return []; }
-  function installProviderModelControl(provider, value) { const settings = document.querySelector(".settings"); if (!settings) return; let label = $("provider-model-control"); if (!label) { label = document.createElement("label"); label.id = "provider-model-control"; label.textContent = "模型 "; const select = document.createElement("select"); select.id = "provider-model"; label.appendChild(select); const key = $("api-key"); key?.parentElement?.insertAdjacentElement("afterend", label); select.onchange = () => { setProviderSaveStatus("模型已更改，请点击保存"); updateButton(); }; } const select = $("provider-model"), options = providerModelOptions(provider); label.hidden = !options.length; if (!select || !options.length) return; select.innerHTML = options.map(([id, text]) => '<option value="' + id + '">' + text + '</option>').join(""); const valid = options.some(([id]) => id === value); select.value = valid ? value : options[0][0]; }
-  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next)]); $("api-key").value = state[providerKeyName(next)] || ""; installProviderModelControl(next, state[providerModelName(next)]); $("custom-provider-panel").open = next === "custom"; setProviderSaveStatus(maskedKey($("api-key").value)); updateButton(); }
+  function installProviderModelControl(provider, value) { const settings = document.querySelector(".settings"); if (!settings) return; let label = $("provider-model-control"); if (!label) { label = document.createElement("label"); label.id = "provider-model-control"; label.textContent = "模型 "; const select = document.createElement("select"); select.id = "provider-model"; label.appendChild(select); const key = $("api-key"); key?.parentElement?.insertAdjacentElement("afterend", label); select.onchange = () => { setProviderSaveStatus("模型已更改，请点击保存"); updateButton(); }; } const select = $("provider-model"), options = providerModelOptions(provider); const visible = options.length > 0; label.hidden = !visible; label.style.display = visible ? "" : "none"; if (!select || !visible) { updateCustomProviderUi(); return; } select.innerHTML = options.map(([id, text]) => '<option value="' + id + '">' + text + '</option>').join(""); const valid = options.some(([id]) => id === value); select.value = valid ? value : options[0][0]; updateCustomProviderUi(); }
+  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next)]); $("api-key").value = state[providerKeyName(next)] || ""; installProviderModelControl(next, state[providerModelName(next)]); $("custom-provider-panel").open = next === "custom"; updateCustomProviderUi(); setProviderSaveStatus(maskedKey($("api-key").value)); updateButton(); }
   const providerAwareFetch = window.fetch;
   window.fetch = (input, init = {}) => { const url = String(input || ""); if (init.body && (activeProvider === "agnes" && /apihub\.agnes-ai\.com/.test(url) || activeProvider === "hfsy" && /hfsyapi\.cn/.test(url))) { try { const body = JSON.parse(init.body); body.model = selectedProviderModel(activeProvider); return providerAwareFetch(input, { ...init, body: JSON.stringify(body) }); } catch {} } return providerAwareFetch(input, init); };
   function saveMode() { return $("save-mode")?.value === "downloads" ? "downloads" : "local"; }
   function selectedProviderModel(provider) { if (provider === "custom") return $("custom-model")?.value.trim() || "gpt-image-2"; const value = $("provider-model")?.value; return value || (provider === "agnes" ? "agnes-image-2.5-flash" : "gpt-image-2"); }
+  const customProtocolHints = {
+    auto: "必填：Base URL、API Key、模型名称。插件会根据地址或模型名自动识别常见协议。",
+    agnes: "示例：Base URL 填 https://apihub.agnes-ai.com，模型填 agnes-image-2.5-flash。其余参数自动处理。",
+    hfsy: "示例：Base URL 填 https://www.hfsyapi.cn，模型填 gpt-image-2 或 gpt-image-2.5。其余参数自动处理。",
+    openai: "通用 OpenAI 图像协议会自动处理 /images/generations、图片字段和 data[0].url。",
+    advanced: "仅当接口文档与常见协议不同，才填写下方高级路径、请求方式和返回字段。"
+  };
+  function updateCustomProviderUi() {
+    const provider = $("provider")?.value;
+    const isCustom = provider === "custom";
+    const apiKey = $("api-key");
+    if (apiKey?.parentElement) apiKey.parentElement.firstChild.nodeValue = isCustom ? "自定义 API Key " : "API Key ";
+    const panel = $("custom-provider-panel");
+    if (panel) panel.open = isCustom;
+    const protocol = $("custom-protocol")?.value || "auto";
+    const advanced = $("custom-advanced-config");
+    if (advanced) advanced.hidden = !isCustom || protocol !== "advanced";
+    const hint = $("custom-protocol-hint");
+    if (hint) hint.textContent = customProtocolHints[protocol] || customProtocolHints.auto;
+    const modelControl = $("provider-model-control");
+    if (modelControl && isCustom) { modelControl.hidden = true; modelControl.style.display = "none"; }
+  }
   function updateSaveModeUi() { const mode = saveMode(); const button = $("choose-folder"), label = $("folder-status"); if (button) button.disabled = mode !== "local"; if (label && mode === "downloads") label.textContent = "当前使用浏览器下载目录：商品生图/"; else if (label && mode === "local" && !directoryHandle) label.textContent = "尚未选择本地文件夹，请先选择"; }
   function installSaveModeControl(value) { const host = document.querySelector(".save-location"); if (!host || $("save-mode")) return; const label = document.createElement("label"); label.className = "save-mode-label"; label.textContent = "保存方式 "; const select = document.createElement("select"); select.id = "save-mode"; select.innerHTML = '<option value="local">指定本地文件夹</option><option value="downloads">浏览器下载目录</option>'; select.value = value === "downloads" ? "downloads" : "local"; label.appendChild(select); host.insertBefore(label, host.firstChild); select.onchange = () => { updateSaveModeUi(); chrome.storage.local.set({ saveMode: select.value }); status(select.value === "local" ? "已切换为指定本地文件夹模式。" : "已切换为浏览器下载模式。"); }; updateSaveModeUi(); }
   let thinkingStartedAt = 0;
@@ -95,6 +117,49 @@
   const refs = () => images.concat(customImages.map(src => ({ src, custom: true })));
   const selectedRefs = () => [...selected].map(i => refs()[i]?.src).filter(Boolean);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const MAX_REFERENCE_BYTES = 5 * 1024 * 1024;
+  function referenceInfo(value) {
+    const text = String(value || "");
+    if (/^https?:\/\//i.test(text)) return { kind: "url", value: text };
+    const match = text.match(/^data:(image\/[\w.+-]+);base64,(.+)$/i);
+    if (!match) return { kind: "unsupported", value: text };
+    const bytes = Math.floor(match[2].length * 3 / 4) - (match[2].endsWith("==") ? 2 : match[2].endsWith("=") ? 1 : 0);
+    return { kind: "data", value: text, mime: match[1].toLowerCase(), bytes };
+  }
+  function validateReferenceImages(values) {
+    const valid = [], failures = [];
+    values.forEach((value, index) => {
+      const info = referenceInfo(value);
+      if (info.kind === "unsupported") failures.push({ index, message: "第 " + (index + 1) + " 张参考图不是公开 URL 或图片 Data URI。" });
+      else if (info.kind === "data" && info.bytes > MAX_REFERENCE_BYTES) failures.push({ index, message: "第 " + (index + 1) + " 张本地图片超过 5 MB，hfsyapi 不接受。" });
+      else valid.push(value);
+    });
+    return { valid, failures };
+  }
+  function responseImage(data) {
+    const candidates = [data?.result_url, data?.data?.result_url, data?.data?.[0]?.url, data?.output?.url, data?.output?.[0]?.url, data?.images?.[0]?.url, data?.data?.[0]?.b64_json, data?.data?.[0]?.b64_data];
+    for (const value of candidates) {
+      if (typeof value !== "string" || !value) continue;
+      if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) return value;
+      if (value.length > 100) return "data:image/png;base64," + value;
+    }
+    return "";
+  }
+  function isQueueFullError(message) { return /队列满|queue\s*(is\s*)?full|too many requests|capacity|overloaded/i.test(String(message || "")); }
+  async function fetchAgnesWithRetry(options, index) {
+    const waits = [0, 5000, 10000, 20000];
+    for (let attempt = 0; attempt < waits.length; attempt++) {
+      if (waits[attempt]) { log("Agnes 第 " + (index + 1) + " 张遇到队列繁忙，等待 " + (waits[attempt] / 1000) + " 秒后重试。", "info"); await sleep(waits[attempt]); }
+      const response = await fetch("https://apihub.agnes-ai.com/v1/images/generations", options);
+      const raw = await response.text();
+      let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
+      if (response.ok) return data;
+      const message = data.error?.message || data.message || ("HTTP " + response.status);
+      const requestId = response.headers.get("x-request-id") || data.request_id || data.error?.request_id || "";
+      if (!isQueueFullError(message) || attempt === waits.length - 1) throw Error(message + (requestId ? " (request id: " + requestId + ")" : ""));
+    }
+    throw Error("Agnes 请求失败");
+  }
   const ensureLicensed = async () => !window.License || await window.License.require();
   const handleDb = () => new Promise((resolve, reject) => { const r = indexedDB.open("image-workflow-settings", 1); r.onupgradeneeded = () => r.result.createObjectStore("handles"); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
   async function persistHandle(handle) { try { const db = await handleDb(); await new Promise((resolve, reject) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").put(handle, "saveFolder"); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); db.close(); } catch {} }
@@ -166,28 +231,64 @@
     try { const base = "商品生图/" + folder; for (let i = 0; i < resultUrls.length; i++) await downloadFile(resultUrls[i], base + "/" + filename(i, batch)); const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json;charset=utf-8" }), jurl = URL.createObjectURL(blob); await downloadFile(jurl, base + "/" + folder + ".json"); setTimeout(() => URL.revokeObjectURL(jurl), 10000); await chrome.storage.local.set({ lastSavedBatchSignature: signature }); await chrome.storage.local.remove("pendingSave"); status("已保存到浏览器下载目录的 商品生图/" + folder); log("已保存到浏览器下载目录：商品生图/" + folder); return true; } catch (e) { status("浏览器下载保存失败：" + (e.message || e), true); return false; }
   }
   function customValue(id, fallback = "") { return $(id)?.value.trim() || fallback; }
-  function customConfig() { return { base: customValue("custom-base-url").replace(/\/$/, ""), generatePath: customValue("custom-generate-path", "/images/generations"), queryPath: customValue("custom-query-path", "/images/generations/{task_id}"), model: customValue("custom-model", "gpt-image-2"), mode: $("custom-mode")?.value || "sync", inputMode: $("custom-input-mode")?.value || "openai", taskIdPaths: customValue("custom-task-id-path", "task_id,data.task_id,id"), statusPaths: customValue("custom-status-path", "status,data.status"), resultPaths: customValue("custom-result-path", "data[0].url,result_url,data.result_url,data[0].b64_json"), successStates: customValue("custom-success-states", "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"), failureStates: customValue("custom-failure-states", "FAILURE,FAILED,ERROR,CANCELLED") }; }
+  function customConfig() { return { protocol: $("custom-protocol")?.value || "auto", base: customValue("custom-base-url").replace(/\/$/, ""), generatePath: customValue("custom-generate-path", "/images/generations"), queryPath: customValue("custom-query-path", "/images/generations/{task_id}"), model: customValue("custom-model", "gpt-image-2"), mode: $("custom-mode")?.value || "sync", inputMode: $("custom-input-mode")?.value || "openai", taskIdPaths: customValue("custom-task-id-path", "task_id,data.task_id,id"), statusPaths: customValue("custom-status-path", "status,data.status"), resultPaths: customValue("custom-result-path", "data[0].url,result_url,data.result_url,data[0].b64_json"), successStates: customValue("custom-success-states", "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"), failureStates: customValue("custom-failure-states", "FAILURE,FAILED,ERROR,CANCELLED") }; }
+  function resolveCustomProtocol(cfg) {
+    if (cfg.protocol && cfg.protocol !== "auto") return cfg.protocol;
+    const base = String(cfg.base || "").toLowerCase(), model = String(cfg.model || "").toLowerCase();
+    if (base.includes("agnes-ai.com") || model.startsWith("agnes-image-")) return "agnes";
+    if (base.includes("hfsyapi.cn") || model.startsWith("gpt-image-")) return "hfsy";
+    return "openai";
+  }
+  function joinCustomUrl(base, path) {
+    const root = String(base || "").replace(/\/+$/, "");
+    let suffix = String(path || "").trim() || "/";
+    if (!suffix.startsWith("/")) suffix = "/" + suffix;
+    if (/\/v1$/i.test(root) && /^\/v1(?:\/|$)/i.test(suffix)) suffix = suffix.slice(3) || "/";
+    return root + suffix;
+  }
+  function resolvedCustomConfig(rawConfig) {
+    const cfg = { ...rawConfig, protocol: resolveCustomProtocol(rawConfig) };
+    if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
+    if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url,data[0].url,data[0].b64_json,data[0].b64_data", successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
+    if (cfg.protocol === "openai") return { ...cfg, generatePath: "/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
+    return cfg;
+  }
+  function inferStoredCustomProtocol(state) {
+    if (["auto", "agnes", "hfsy", "openai", "advanced"].includes(state.customProtocol)) return state.customProtocol;
+    const changedMapping = state.customInputMode && state.customInputMode !== "openai" || state.customMode && state.customMode !== "sync" || state.customTaskIdPaths && state.customTaskIdPaths !== "task_id,data.task_id,id" || state.customStatusPaths && state.customStatusPaths !== "status,data.status" || state.customResultPaths && state.customResultPaths !== "data[0].url,result_url,data.result_url,data[0].b64_json";
+    return changedMapping ? "advanced" : "auto";
+  }
   function customPathValue(data, path) { const parts = String(path || "").trim().replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean); let value = data; for (const part of parts) { if (value === null || value === undefined || !Object.prototype.hasOwnProperty.call(Object(value), part)) return undefined; value = value[part]; } return value; }
   function customFirstValue(data, paths) { for (const path of String(paths || "").split(",").map(item => item.trim()).filter(Boolean)) { const value = customPathValue(data, path); if (value !== undefined && value !== null && value !== "") return { value, path }; } return { value: undefined, path: "" }; }
   function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value !== "string") return ""; if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; return ""; }
   function customErrorMessage(data, fallback) { return data?.error?.message || data?.data?.error?.message || data?.fail_reason || data?.data?.fail_reason || data?.message || fallback; }
-  function customRequestBody(cfg, ref) { const body = { model: cfg.model, prompt: $("prompt").value.trim(), size: $("size").value }; if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; } return body; }
+  function customRequestBody(cfg, ref) {
+    const prompt = $("prompt").value.trim(), size = $("size").value;
+    if (cfg.protocol === "agnes") {
+      const ratio = { "1024x1024": "1:1", "1280x720": "16:9", "1024x768": "4:3", "768x1024": "3:4" };
+      return { model: cfg.model, prompt, size: "1K", ratio: ratio[size] || "1:1", extra_body: { image: [ref], response_format: "url" } };
+    }
+    if (cfg.protocol === "hfsy") return { model: cfg.model, prompt, size, reference_images: [ref], n: 1, response_format: "b64_json" };
+    const body = { model: cfg.model, prompt, size };
+    if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; }
+    return body;
+  }
   async function customRequest(url, options, stage) { let response; try { response = await fetch(url, options); } catch (error) { throw Error(stage + "网络请求失败：" + (error?.message || "Failed to fetch") + "。请检查 Base URL、扩展站点权限和中转站可访问性。"); } const raw = await response.text(); let data; try { data = raw ? JSON.parse(raw) : {}; } catch { throw Error(stage + "返回不是 JSON（HTTP " + response.status + "）：" + raw.slice(0, 160)); } if (!response.ok) throw Error(customErrorMessage(data, stage + "失败（HTTP " + response.status + "）")); return data; }
   async function generateCustom(rawConfig, refs, key) {
-    const cfg = { ...customConfig(), ...rawConfig };
+    const cfg = resolvedCustomConfig({ ...customConfig(), ...rawConfig });
     if (!cfg.base) throw Error("请先展开并填写自定义中转站 Base URL。");
     const headers = { Authorization: "Bearer " + key, "Content-Type": "application/json" };
     const urls = [], failures = [];
     const recordFailure = (index, stage, error) => { const message = "第 " + (index + 1) + " 张" + stage + "失败：" + (error?.message || error); failures.push(message); log(message, "error"); };
     if (cfg.mode === "sync") {
       for (let index = 0; index < refs.length; index++) {
-        try { log("自定义中转站：正在请求第 " + (index + 1) + " / " + refs.length + " 张同步结果。"); const data = await customRequest(cfg.base + cfg.generatePath, { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, refs[index])) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
+        try { log("自定义中转站：正在请求第 " + (index + 1) + " / " + refs.length + " 张同步结果。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, refs[index])) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
         catch (error) { recordFailure(index, "同步生成", error); }
       }
     } else {
       const tasks = [];
       for (let index = 0; index < refs.length; index++) {
-        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + refs.length + " 张异步任务。"); const data = await customRequest(cfg.base + cfg.generatePath, { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, refs[index])) }, "异步任务提交"); const task = customFirstValue(data, cfg.taskIdPaths); if (!task.value) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(task.value), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + task.value); }
+        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + refs.length + " 张异步任务。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, refs[index])) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); if (!task.value) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(task.value), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + task.value); }
         catch (error) { recordFailure(index, "异步提交", error); }
       }
       const successStates = new Set(cfg.successStates.split(",").map(value => value.trim().toUpperCase()).filter(Boolean));
@@ -195,7 +296,7 @@
       for (const task of tasks) {
         const startedAt = Date.now(); let complete = false;
         while (!complete && Date.now() - startedAt < 600000) {
-          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customRequest(cfg.base + path, { headers }, "任务 " + task.id + " 查询"); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
+          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customRequest(joinCustomUrl(cfg.base, path), { headers }, "任务 " + task.id + " 查询"); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
           catch (error) { recordFailure(task.index, "异步查询", error); complete = true; break; }
           await sleep(2500);
         }
@@ -207,8 +308,49 @@
     if (failures.length) log("自定义中转站本批完成：成功 " + urls.length + " 张，失败 " + failures.length + " 张。", "error");
     return urls;
   }
-  async function generate() { const rs=selectedRefs(), key=$("api-key").value.trim(), provider=$("provider").value; if(!rs.length)return; if(!directoryHandle){const ok=confirm("尚未选择本地保存文件夹，是否现在选择？");if(!ok){status("未选择本地保存文件夹，已取消生成。",true);return;}await chooseFolder();if(!directoryHandle){status("必须选择本地保存文件夹后才能生成。",true);return;}} try{const perm=await directoryHandle.queryPermission({mode:"readwrite"});if(perm!=="granted"){const granted=await directoryHandle.requestPermission({mode:"readwrite"});if(granted!=="granted"){status("本地保存文件夹尚未授权，已取消生成。",true);return;}}}catch(e){status("无法确认本地文件夹授权："+e.message,true);return;} $("generate").disabled=true;thinking(true);resultUrls=[];batchTasks=[];try{if(provider==="custom"){const cfg={base:$("custom-base-url").value.trim().replace(/\/$/,""),generatePath:$("custom-generate-path").value.trim()||"/images/generations",queryPath:$("custom-query-path").value.trim()||"/images/generations/{task_id}",model:$("custom-model").value.trim()||"gpt-image-2",mode:$("custom-mode").value};resultUrls.push(...await generateCustom(cfg,rs,key));setProgress(92);await finish("自定义中转站生成完成，共 "+resultUrls.length+" 张。");}else if(provider==="agnes"){const ratio={"1024x1024":"1:1","1280x720":"16:9","1024x768":"4:3","768x1024":"3:4"};for(let i=0;i<rs.length;i++){const r=await fetch("https://apihub.agnes-ai.com/v1/images/generations",{method:"POST",headers:{Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({model:"agnes-image-2.5-flash",prompt:$("prompt").value.trim(),size:"1K",ratio:ratio[$("size").value]||"1:1",extra_body:{image:[rs[i]],response_format:"url"}})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||d.message||"Agnes 请求失败（"+r.status+"）");const u=d.data?.[0]?.url||(d.data?.[0]?.b64_json?"data:image/png;base64,"+d.data[0].b64_json:"");if(!u)throw Error("Agnes 返回中没有图片");resultUrls.push(u);setProgress(Math.round((i+1)/rs.length*92));}await finish("Agnes 生成完成，共 "+resultUrls.length+" 张。");}else{for(const ref of rs){try{const r=await fetch("https://www.hfsyapi.cn/v1/images/generations/async",{method:"POST",headers:{Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-image-2",prompt:$("prompt").value.trim(),size:$("size").value,response_format:"b64_json",reference_images:[ref]})});const d=await r.json();if(!r.ok){const msg=d.error?.message||d.message||"提交任务失败（"+r.status+"）";batchTasks.push({taskId:"submit-"+(batchTasks.length+1),status:"FAILURE",error:msg,referenceImage:ref});log("提交任务失败："+msg,"error");continue;}const id=d.task_id||d.id||d.data?.task_id;if(!id){const msg="接口未返回 task_id";batchTasks.push({taskId:"submit-"+(batchTasks.length+1),status:"FAILURE",error:msg,referenceImage:ref});log(msg,"error");continue;}batchTasks.push({taskId:id,status:"QUEUED",referenceImage:ref});}catch(e){const msg=e.message||"提交任务异常";batchTasks.push({taskId:"submit-"+(batchTasks.length+1),status:"FAILURE",error:msg,referenceImage:ref});log("提交任务异常："+msg,"error");}}await chrome.storage.local.set({activeTask:{batch:true},batchTasks});await pollHfsy(key);}}catch(e){thinking(false);status(e.message,true);}finally{updateButton();}}
-  async function pollHfsy(key) { const check = async () => { let done = 0, failed = 0; for (const t of batchTasks) { if (t.status === "SUCCESS" || t.status === "FAILURE") { t.status === "SUCCESS" ? done++ : failed++; continue; } try { const response = await fetch("https://www.hfsyapi.cn/v1/images/generations/" + encodeURIComponent(t.taskId), { headers: { Authorization: "Bearer " + key } }); const d = await response.json(); const apiError = d.error || d.data?.error; const state = String(d.status || d.data?.status || (apiError ? "FAILURE" : "")).toUpperCase(); if (!response.ok || apiError || state === "FAILURE" || state === "FAILED") { t.status = "FAILURE"; t.error = apiError?.message || d.fail_reason || d.data?.fail_reason || d.message || "中转站任务失败"; failed++; log("任务 " + t.taskId + " 失败：" + t.error, "error"); continue; } if (state === "SUCCESS" || state === "COMPLETED") { t.status = "SUCCESS"; t.url = d.result_url || d.data?.result_url || d.data?.[0]?.url; if (t.url) { done++; log("任务 " + t.taskId + " 已返回图片", "info"); } else { t.status = "FAILURE"; t.error = "任务成功但没有返回图片 URL"; failed++; log("任务 " + t.taskId + " 成功但缺少图片 URL", "error"); } } } catch (e) { t.status = "FAILURE"; t.error = e.message || "查询任务失败"; failed++; log("任务 " + t.taskId + " 查询失败：" + t.error, "error"); } } const total = batchTasks.length, finished = done + failed; setProgress(total ? Math.round(finished / total * 92) : 92); $("thinking-text").textContent = "已完成 " + finished + " / " + total + " 张，成功 " + done + " 张，失败 " + failed + " 张…"; if (finished >= total) { clearInterval(pollTimer); resultUrls = batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url); await finish("生成完成：成功 " + resultUrls.length + " 张，失败 " + failed + " 张。"); } }; await check(); if (batchTasks.some(t => !["SUCCESS", "FAILURE"].includes(t.status))) pollTimer = setInterval(check, 2500); }
+  async function generate() {
+    const rawRefs = selectedRefs(), key = $("api-key").value.trim(), provider = $("provider").value;
+    if (!rawRefs.length) return;
+    const checked = validateReferenceImages(rawRefs);
+    checked.failures.forEach(item => log(item.message, "error"));
+    if (!checked.valid.length) { status("没有可提交的参考图片，请检查图片格式和大小。", true); return; }
+    const rs = checked.valid;
+    if (saveMode() === "local") { if (!directoryHandle) { const ok = confirm("尚未选择本地保存文件夹，是否现在选择？"); if (!ok) { status("未选择本地保存文件夹，已取消生成。", true); return; } await chooseFolder(); if (!directoryHandle) { status("必须选择本地保存文件夹后才能生成。", true); return; } } try { const perm = await directoryHandle.queryPermission({ mode: "readwrite" }); if (perm !== "granted") { const granted = await directoryHandle.requestPermission({ mode: "readwrite" }); if (granted !== "granted") { status("本地文件夹尚未授权，已取消生成。", true); return; } } } catch (e) { status("无法确认本地文件夹授权：" + e.message, true); return; } }
+    $("generate").disabled = true; thinking(true); resultUrls = []; batchTasks = [];
+    try {
+      if (provider === "custom") {
+        const cfg = customConfig(); resultUrls.push(...await generateCustom(cfg, rs, key)); setProgress(92); await finish("自定义中转站生成完成，共 " + resultUrls.length + " 张。");
+      } else if (provider === "agnes") {
+        const ratio = { "1024x1024": "1:1", "1280x720": "16:9", "1024x768": "4:3", "768x1024": "3:4" }, model = selectedProviderModel("agnes");
+        for (let i = 0; i < rs.length; i++) {
+          try {
+            const data = await fetchAgnesWithRetry({ method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify({ model, prompt: $("prompt").value.trim(), size: "1K", ratio: ratio[$("size").value] || "1:1", extra_body: { image: [rs[i]], response_format: "url" } }) }, i);
+            const url = responseImage(data); if (!url) throw Error("Agnes 返回中没有图片"); resultUrls.push(url); setProgress(Math.round((i + 1) / rs.length * 92));
+          } catch (e) { log("Agnes 第 " + (i + 1) + " 张失败：" + (e.message || e), "error"); }
+        }
+        if (resultUrls.length) await finish("Agnes 生成完成，共 " + resultUrls.length + " 张。"); else throw Error("Agnes 没有成功返回图片，请查看执行日志。");
+      } else {
+        const model = selectedProviderModel("hfsy"), tasks = [];
+        for (let i = 0; i < rs.length; i++) {
+          try {
+            const response = await fetch("https://www.hfsyapi.cn/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify({ model, prompt: $("prompt").value.trim(), size: $("size").value, response_format: "b64_json", reference_images: [rs[i]], n: 1 }) });
+            const raw = await response.text(); let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
+            const direct = responseImage(data);
+            if (response.ok && direct) { resultUrls.push(direct); batchTasks.push({ taskId: "direct-" + (i + 1), status: "SUCCESS", url: direct, referenceImage: rs[i] }); log("hfsyapi 第 " + (i + 1) + " 张已直接返回图片。"); continue; }
+            if (!response.ok) throw Error(data.error?.message || data.message || "提交任务失败（HTTP " + response.status + "）");
+            const id = data.task_id || data.id || data.data?.task_id; if (!id) throw Error("接口未返回 task_id 或图片结果");
+            tasks.push({ taskId: String(id), status: "QUEUED", referenceImage: rs[i] });
+          } catch (e) { const msg = e.message || "提交任务异常"; batchTasks.push({ taskId: "submit-" + (i + 1), status: "FAILURE", error: msg, referenceImage: rs[i] }); log("hfsyapi 第 " + (i + 1) + " 张失败：" + msg, "error"); }
+        }
+        batchTasks.push(...tasks);
+        if (tasks.length) { await chrome.storage.local.set({ activeTask: { batch: true, provider: "hfsy", startedAt: Date.now(), status: "POLLING", resultUrls: remoteImageUrls(resultUrls) }, batchTasks }); await pollHfsy(key); }
+        else if (resultUrls.length) await finish("hfsyapi 生成完成，共 " + resultUrls.length + " 张。");
+        else throw Error("hfsyapi 没有成功返回图片，请查看执行日志。");
+      }
+    } catch (e) { thinking(false); status(e.message, true); }
+    finally { updateButton(); }
+  }
+  async function pollHfsy(key) { const check = async () => { let done = 0, failed = 0; for (const t of batchTasks) { if (t.status === "SUCCESS" || t.status === "FAILURE") { t.status === "SUCCESS" ? done++ : failed++; continue; } try { const response = await fetch("https://www.hfsyapi.cn/v1/images/generations/" + encodeURIComponent(t.taskId), { headers: { Authorization: "Bearer " + key } }); const raw = await response.text(); let d = {}; try { d = raw ? JSON.parse(raw) : {}; } catch { d = { message: raw }; } const apiError = d.error || d.data?.error; const state = String(d.status || d.data?.status || (apiError ? "FAILURE" : "")).toUpperCase(); const image = responseImage(d); if (response.ok && image) { t.status = "SUCCESS"; t.url = image; done++; log("任务 " + t.taskId + " 已返回图片", "info"); continue; } if (!response.ok || apiError || ["FAILURE", "FAILED", "ERROR", "CANCELLED"].includes(state)) { t.status = "FAILURE"; t.error = apiError?.message || d.fail_reason || d.data?.fail_reason || d.message || "中转站任务失败"; failed++; log("任务 " + t.taskId + " 失败：" + t.error, "error"); continue; } if (["SUCCESS", "SUCCEEDED", "COMPLETED", "DONE", "FINISHED"].includes(state)) { t.status = "FAILURE"; t.error = "任务成功但没有图片结果"; failed++; log("任务 " + t.taskId + " 成功但缺少图片结果", "error"); } } catch (e) { log("任务 " + t.taskId + " 查询异常，继续等待：" + (e.message || "网络错误"), "error"); } } const total = batchTasks.length, finished = done + failed; setProgress(total ? Math.round(finished / total * 92) : 92); $("thinking-text").textContent = "已完成 " + finished + " / " + total + " 张，成功 " + done + " 张，失败 " + failed + " 张…"; if (finished >= total) { clearInterval(pollTimer); resultUrls = batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url); await finish("生成完成：成功 " + resultUrls.length + " 张，失败 " + failed + " 张。"); } }; await check(); if (batchTasks.some(t => !["SUCCESS", "FAILURE"].includes(t.status))) pollTimer = setInterval(check, 2500); }
   async function pollHfsySafe(key) {
     const startedAt = Date.now();
     let finished = false;
@@ -218,7 +360,7 @@
       clearInterval(pollTimer);
       pollTimer = null;
       resultUrls = batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url);
-      await chrome.storage.local.set({ batchTasks, lastResults: resultUrls, activeTask: null });
+      await chrome.storage.local.set({ batchTasks, lastResults: remoteImageUrls(resultUrls), activeTask: null });
       await finish(message);
     };
     const check = async () => {
@@ -244,7 +386,7 @@
             }
             return "";
           };
-          const imageUrl = findImage(d);
+          const imageUrl = responseImage(d) || findImage(d);
           const apiError = d.error || d.data?.error;
           const state = String(d.status || d.data?.status || (apiError ? "FAILURE" : "")).toUpperCase();
           if (imageUrl && response.ok) {
@@ -324,8 +466,8 @@
     pollTimer = setInterval(async () => { try { if (await sync()) { clearInterval(pollTimer); pollTimer = null; } } catch (e) { log("读取后台任务状态失败：" + (e.message || "网络错误"), "error"); } }, 2500);
   }
   async function persistHistory() {
-    const persistableUrls = remoteImageUrls(resultUrls);
-    if (!persistableUrls.length) { if (resultUrls.length) log("本次结果为内嵌图片数据，未写入插件历史记录；图片仍可在本次结果中保存。", "info"); return; }
+    const persistableUrls = resultUrls.filter(value => isRemoteImageUrl(value) || /^data:image\//i.test(String(value || "")));
+    if (!persistableUrls.length) { if (resultUrls.length) log("本次结果没有可识别的图片地址，未写入插件历史记录。", "info"); return; }
     const signature = JSON.stringify({ urls: persistableUrls, prompt: $("prompt")?.value.trim() || "", provider: $("provider")?.value || "", model: selectedProviderModel($("provider")?.value || "agnes"), tasks: batchTasks.map(t => t.taskId) });
     const current = await chrome.storage.local.get('lastHistoryBatchSignature');
     if (current.lastHistoryBatchSignature === signature) return;
@@ -334,7 +476,8 @@
     const promptText = $("prompt")?.value.trim() || "";
     const entries = persistableUrls.map((url, index) => ({
       id: now + '-' + index,
-      url,
+      url: isRemoteImageUrl(url) ? url : "",
+      hasInlineImage: /^data:image\//i.test(url),
       prompt: promptText,
       provider: $("provider")?.value || "",
       model: selectedProviderModel($("provider")?.value || "agnes"),
@@ -347,56 +490,21 @@
     history = history.concat(entries).slice(-200);
     await chrome.storage.local.set({ history, lastHistoryBatchSignature: signature });
   }
-  async function finish(message) { thinking(false); renderResults(); await chrome.storage.local.set({ lastResults: resultUrls, activeTask: null }); await persistHistory(); await saveBatch(true); status(message); if (document.querySelector('input[name="upload-mode"]:checked')?.value === "auto" && resultUrls.length) { status(message + " 正在自动上传到店小秘…"); await replaceToDianxiaomi(); } renderHistory(); renderImages(); }
+  async function finish(message) { thinking(false); renderResults(); await chrome.storage.local.set({ lastResults: remoteImageUrls(resultUrls), activeTask: null }); await persistHistory(); let saved = true; if ($("auto-save")?.checked) saved = await saveBatch(true); else log("已关闭自动保存，本次结果仅展示在插件中。", "info"); status(saved ? message : message + " 但保存未完成，请查看执行日志。"); if (document.querySelector('input[name="upload-mode"]:checked')?.value === "auto" && resultUrls.length) { status(message + " 正在自动上传到店小秘…"); await replaceToDianxiaomi(); } renderHistory(); renderImages(); }
   async function replaceToDianxiaomi() { const t = await getPageTab(); if (!t || t.url.indexOf("dianxiaomi.com/web/amazon/edit") < 0) return status("请先切换到店小秘产品编辑页。", true); const us = resultUrls.filter(u => /^https?:\/\//i.test(u)); if (!us.length) return status("没有可上传的图片 URL。", true); status("正在清空原图并上传…"); try { const r = await chrome.tabs.sendMessage(t.id, { type: "AUTO_REPLACE_DIANXIAOMI", urls: us, secondsPerImage: 1000 }); if (!r?.ok) throw Error(r?.error || "自动上传失败"); status("网络图片添加并校验成功：" + r.uploaded + " 张图片。"); } catch (e) { status(pageConnectionMessage(e), true); } }
   function renderResults() { const grid = $("result-grid"); grid.innerHTML = ""; $("results").hidden = false; const head = $("download-all").parentElement; if (!$("replace-all")) { const b = document.createElement("button"); b.id = "replace-all"; b.className = "text-button"; b.textContent = "全部上传到店小秘"; b.onclick = replaceToDianxiaomi; head.appendChild(b); } resultUrls.forEach((url, i) => { const c = document.createElement("div"); c.className = "result-card"; const im = document.createElement("img"); im.src = url; const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.download = filename(i); a.textContent = "打开/下载"; c.append(im, a); grid.appendChild(c); }); }
-  function renderHistory() { const list = $("history-list"); list.innerHTML = history.length ? history.slice().reverse().map(x => '<div class="history-item"><img src="' + x.url + '"><div><p>' + String(x.prompt || "").replaceAll("<", "&lt;") + '</p><time>' + new Date(x.createdAt).toLocaleString() + '</time></div><a target="_blank" href="' + x.url + '">打开</a></div>').join("") : '<p class="muted">暂无生成记录</p>'; }
-  finish = async function(message) { thinking(false); renderResults(); const cachedUrls = remoteImageUrls(resultUrls); await chrome.storage.local.set({ lastResults: cachedUrls, activeTask: null }); if (cachedUrls.length !== resultUrls.length) log("内嵌图片结果未写入扩展缓存，避免占满浏览器存储。", "info"); await persistHistory(); let saved = true; if ($("auto-save")?.checked) saved = await saveBatch(true); else log("已关闭自动保存，本次结果仅展示在插件中。"); status(saved ? message : message + " 但保存未完成，请查看执行日志。"); if (document.querySelector('input[name="upload-mode"]:checked')?.value === "auto" && resultUrls.length) { status(message + " 正在自动上传到店小秘…"); await replaceToDianxiaomi(); } renderHistory(); renderImages(); };
+  function renderHistory() { const list = $("history-list"); list.innerHTML = history.length ? history.slice().reverse().map(x => { const image = x.url ? '<img src="' + x.url + '">' : '<div class="history-placeholder">已保存图片</div>'; const link = x.url ? '<a target="_blank" href="' + x.url + '">打开</a>' : '<span class="muted">本地文件或内嵌结果</span>'; return '<div class="history-item">' + image + '<div><p>' + String(x.prompt || "").replaceAll("<", "&lt;") + '</p><time>' + new Date(x.createdAt).toLocaleString() + '</time></div>' + link + '</div>'; }).join("") : '<p class="muted">暂无生成记录</p>'; }
   async function chooseFolder() { if (!window.showDirectoryPicker) return status("当前浏览器不支持选择文件夹，无法使用本地文件夹模式。", true); try { directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" }); await persistHandle(directoryHandle); $("folder-status").textContent = "已选择本地文件夹，生成后直接保存"; status("本地文件夹已授权并持久化。"); } catch (e) { if (e.name !== "AbortError") status("选择文件夹失败：" + e.message, true); } }
-  function bind() { $("refresh").onclick = scanImages; $("rescan").onclick = scanImages; $("filter-placeholders").onchange = scanImages; $("generate").onclick = generate; $("prompt").oninput = updateButton; $("api-key").oninput = () => { updateButton(); setProviderSaveStatus("密钥已更改，请点击保存"); }; $("save-provider-config").onclick = () => saveProviderConfig(true); $("upload-custom").onclick = () => $("custom-images").click(); $("custom-images").onchange = async e => { const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); }))); customImages.push(...added); customImages = customImages.slice(-30); e.target.value = ""; renderImages(); status("已添加本地参考图 " + added.length + " 张，请在列表中选择。"); }; $("choose-folder").onclick = chooseFolder; $("download-all").onclick = () => saveBatch(true); $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); }; $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); }; document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value })); $("provider").onchange = () => switchProviderConfig($("provider").value); $("save-custom-provider").onclick = () => saveProviderConfig(true); ["custom-base-url", "custom-generate-path", "custom-query-path", "custom-model", "custom-mode"].forEach(id => $(id)?.addEventListener("input", () => setProviderSaveStatus("配置已更改，请点击保存"))); }
-  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customMode", "activeTask", "batchTasks"], async s => { const cleanedLegacy = await storageCleanupReady; s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customMode", "activeTask", "batchTasks"]); $("api-key").value = s.apiKey || ""; $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-provider-panel").open=$("provider").value==="custom"; const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls) && pending.pendingSave.urls.length){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (cleanedLegacy) log("已清理旧版本中的内嵌图片缓存，不影响正常配置与已保存的本地文件。"); if (resultUrls.length) renderResults(); bind(); updateButton(); scanImages(); const recoverable = s.activeTask?.batch && Array.isArray(s.batchTasks) && s.batchTasks.length && $("api-key").value.trim(); if (recoverable) { const unresolved = s.batchTasks.some(t => !["SUCCESS","FAILURE"].includes(t.status)); if (unresolved) { batchTasks=s.batchTasks; thinking(true); status("正在恢复未完成的中转站任务…"); await watchHfsyInBackground($("api-key").value.trim()); } else { batchTasks=s.batchTasks; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : s.batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url); if (resultUrls.length || s.activeTask?.status === "COMPLETE") { thinking(true); await finish("后台任务已完成：成功 " + resultUrls.length + " 张，失败 " + s.batchTasks.filter(t => t.status === "FAILURE").length + " 张。"); } else { await chrome.storage.local.set({ activeTask: null }); log("上一批中转站任务已结束，已清理恢复状态。"); } } } });
+  function bind() { $("refresh").onclick = scanImages; $("rescan").onclick = scanImages; $("filter-placeholders").onchange = scanImages; $("generate").onclick = generate; $("prompt").oninput = updateButton; $("api-key").oninput = () => { updateButton(); setProviderSaveStatus("密钥已更改，请点击保存"); }; $("save-provider-config").onclick = () => saveProviderConfig(true); $("upload-custom").onclick = () => $("custom-images").click(); $("custom-images").onchange = async e => { const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); }))); customImages.push(...added); customImages = customImages.slice(-30); e.target.value = ""; renderImages(); status("已添加本地参考图 " + added.length + " 张，请在列表中选择。"); }; $("choose-folder").onclick = chooseFolder; $("download-all").onclick = () => saveBatch(true); $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); }; $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); }; document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value })); $("provider").onchange = () => switchProviderConfig($("provider").value); ["custom-base-url", "custom-model", "custom-generate-path", "custom-query-path", "custom-mode"].forEach(id => $(id)?.addEventListener("input", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); })); $("custom-protocol")?.addEventListener("change", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); }); }
+  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => { const cleanedLegacy = await storageCleanupReady; s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]); $("api-key").value = s.apiKey || ""; $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-protocol").value = inferStoredCustomProtocol(s); $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-input-mode").value=s.customInputMode||"openai"; $("custom-provider-panel").open=$("provider").value==="custom"; updateCustomProviderUi(); const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls) && pending.pendingSave.urls.length){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (cleanedLegacy) log("已清理旧版本中的内嵌图片缓存，不影响正常配置与已保存的本地文件。"); if (resultUrls.length) renderResults(); bind(); updateButton(); scanImages(); const recoverable = s.activeTask?.batch && Array.isArray(s.batchTasks) && s.batchTasks.length && $("api-key").value.trim(); if (recoverable) { const unresolved = s.batchTasks.some(t => !["SUCCESS","FAILURE"].includes(t.status)); if (unresolved) { batchTasks=s.batchTasks; thinking(true); status("正在恢复未完成的中转站任务…"); await watchHfsyInBackground($("api-key").value.trim()); } else { batchTasks=s.batchTasks; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : s.batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url); if (resultUrls.length || s.activeTask?.status === "COMPLETE") { thinking(true); await finish("后台任务已完成：成功 " + resultUrls.length + " 张，失败 " + s.batchTasks.filter(t => t.status === "FAILURE").length + " 张。"); } else { await chrome.storage.local.set({ activeTask: null }); log("上一批中转站任务已结束，已清理恢复状态。"); } } } });
   pollHfsy = pollHfsySafe;
   setTimeout(() => importLocalHistory().then(() => renderHistory()), 1200);
-  const legacyGenerate = generate;
-  generate = async function() {
-    if ($('provider').value !== 'hfsy') return legacyGenerate();
-    const refsNow = selectedRefs(), keyNow = $('api-key').value.trim();
-    if (!refsNow.length || !keyNow) return;
-    if (!directoryHandle) { const ok = confirm('尚未选择本地保存文件夹，是否现在选择？'); if (!ok) return status('未选择本地保存文件夹，已取消生成。', true); await chooseFolder(); if (!directoryHandle) return status('必须选择本地保存文件夹后才能生成。', true); }
-    try { const perm = await directoryHandle.queryPermission({mode:'readwrite'}); if (perm !== 'granted' && await directoryHandle.requestPermission({mode:'readwrite'}) !== 'granted') return status('本地文件夹尚未授权，已取消生成。', true); } catch (e) { return status('无法确认本地文件夹授权：' + e.message, true); }
-    $('generate').disabled = true; thinking(true); resultUrls = []; batchTasks = []; let failedNow = 0;
-    for (const ref of refsNow) {
-      try {
-        const r = await fetch('https://www.hfsyapi.cn/v1/images/generations', { method:'POST', headers:{Authorization:'Bearer '+keyNow, 'Content-Type':'application/json'}, body:JSON.stringify({model:'gpt-image-2', prompt:$('prompt').value.trim(), size:$('size').value, reference_images:[ref], n:1, response_format:'b64_json'}) });
-        const d = await r.json();
-        const raw = d.result_url || d.data?.result_url || d.data?.[0]?.url || d.output?.url || d.output?.[0]?.url || d.images?.[0]?.url || d.data?.[0]?.b64_json || d.data?.[0]?.b64_data || '';
-        const u = typeof raw === 'string' && (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)) ? raw : (raw ? 'data:image/png;base64,' + raw : '');
-        if (r.ok && u) { resultUrls.push(u); batchTasks.push({taskId:'direct-'+(batchTasks.length+1), status:'SUCCESS', url:u, referenceImage:ref}); setProgress(Math.min(92, Math.round(resultUrls.length / refsNow.length * 92))); $("thinking-text").textContent = "已完成 " + resultUrls.length + " / " + refsNow.length + " 张，继续生成中…"; continue; }
-        const id = d.task_id || d.id || d.data?.task_id;
-        if (r.ok && id) { batchTasks.push({taskId:id, status:'QUEUED', referenceImage:ref}); continue; }
-        failedNow++; batchTasks.push({taskId:'direct-'+(batchTasks.length+1), status:'FAILURE', error:d.error?.message || d.message || ('HTTP '+r.status), referenceImage:ref}); log('单张图片生成失败：'+(d.error?.message || d.message || ('HTTP '+r.status)), 'error');
-      } catch (e) { failedNow++; batchTasks.push({taskId:'direct-'+(batchTasks.length+1), status:'FAILURE', error:e.message || '网络错误', referenceImage:ref}); log('单张图片请求异常：'+(e.message || '网络错误'), 'error'); }
-    }
-    const pendingTasks = batchTasks.filter(task => !["SUCCESS", "FAILURE"].includes(task.status));
-    if (pendingTasks.length) { await chrome.storage.local.set({activeTask:{batch:true, provider:"hfsy", startedAt:Date.now(), status:"POLLING", resultUrls:remoteImageUrls(resultUrls)}, batchTasks:batchTasks.map(task => ({ ...task, url: isRemoteImageUrl(task.url) ? task.url : undefined, referenceImage: isRemoteImageUrl(task.referenceImage) ? task.referenceImage : undefined }))}); await chrome.runtime.sendMessage({ type:"START_HFSY_POLL", apiKey:keyNow }); await watchHfsyInBackground(keyNow); }
-    else await finish('生成结束：成功 '+resultUrls.length+' 张，失败 '+failedNow+' 张。');
-    $('generate').disabled = false;
-  };
   const rawGenerate = generate;
   generate = async function() { if (!(await ensureLicensed())) return; return rawGenerate.apply(this, arguments); };
   const rawSaveBatch = saveBatch;
   saveBatch = async function() { if (!(await ensureLicensed())) return false; return rawSaveBatch.apply(this, arguments); };
   const rawReplace = replaceToDianxiaomi;
   replaceToDianxiaomi = async function() { if (!(await ensureLicensed())) return; return rawReplace.apply(this, arguments); };
-  const licensedGenerate = generate;
-  generate = async function() {
-    if (saveMode() === "local") return licensedGenerate.apply(this, arguments);
-    // 兼容现有生成流程：下载模式不需要目录句柄，但旧流程会预先检查授权。
-    const originalDirectoryHandle = directoryHandle;
-    directoryHandle = { queryPermission: async () => "granted", requestPermission: async () => "granted" };
-    try { return await licensedGenerate.apply(this, arguments); }
-    finally { directoryHandle = originalDirectoryHandle; }
-  };
   chrome.storage.local.get(["autoSave", "saveMode"], s => {
     if ($("auto-save")) { $("auto-save").checked = s.autoSave !== false; $("auto-save").onchange = () => chrome.storage.local.set({ autoSave: $("auto-save").checked }); }
     installSaveModeControl(s.saveMode === "downloads" ? "downloads" : "local");
