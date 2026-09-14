@@ -1,0 +1,18 @@
+# 离线授权私钥，绝不能进入版本库或客户包。
+*.pem
+
+# 生成图片、批次 JSON 与本地测试记录。
+picture/
+
+# 客户交付压缩包与校验文件可由发行目录重新生成。
+release/*.zip
+release/*.sha256
+
+# WinForms 授权管理工具的本机构建产物与个人设置。
+license-manager/bin/
+license-manager/obj/
+license-manager/*.user
+
+# 本机编辑器和诊断文件。
+.vs/
+*.log

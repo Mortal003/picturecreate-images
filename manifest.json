@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "商品生图助手",
+  "version": "0.1.0",
+  "description": "从当前网页选择参考图，调用 GPT-image-2 生成电商图片。",
+  "permissions": ["activeTab", "storage", "downloads", "scripting", "sidePanel"],
+  "host_permissions": ["https://www.hfsyapi.cn/*", "https://apigo.hfsyapi.cn/*", "https://apihub.agnes-ai.com/*", "<all_urls>"],
+  "background": {"service_worker": "background.js"},
+  "side_panel": {"default_path": "popup.html"},
+  "action": {"default_title": "打开商品生图助手"},
+  "content_scripts": [{"matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle"}]
+}
