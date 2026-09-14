@@ -1,6 +1,7 @@
 const HFSY_POLL_ALARM = "hfsy-task-poll";
 const HFSY_QUERY_URL = "https://www.hfsyapi.cn/v1/images/generations/";
 let hfsyPollPromise = null;
+const remoteImageUrls = values => (Array.isArray(values) ? values : []).filter(value => typeof value === "string" && /^https?:\/\//i.test(value));
 
 chrome.action.onClicked.addListener(async tab => { try { await chrome.sidePanel.open({ windowId: tab.windowId }); } catch (e) { console.warn("无法打开侧边栏", e); } });
 
@@ -17,7 +18,7 @@ async function generateAgnes(message) {
   const ratioMap = { "1024x1024":"1:1", "1040x832":"5:4", "720x1280":"9:16", "1280x720":"16:9", "1024x768":"4:3", "1008x672":"3:2", "832x1040":"4:5", "768x1024":"3:4", "672x1008":"2:3", "1344x576":"21:9" };
   const urls = [];
   for (const ref of refs) {
-    const data = await parseResponse(await fetch("https://apihub.agnes-ai.com/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: ratioMap[message.size] || "1:1", extra_body: { image: [ref], response_format: "url" } }) }));
+    const data = await parseResponse(await fetch("https://apihub.agnes-ai.com/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: ratioMap[message.size] || "1:1", extra_body: { image: [ref], response_format: "url" } }) }));
     const url = data.data?.[0]?.url || data.data?.[0]?.b64_json;
     if (!url) throw new Error("Agnes 返回中没有图片 URL");
     urls.push(url);
@@ -28,7 +29,7 @@ async function generateAgnes(message) {
 async function generateHfsy(message) {
   const tasks = [];
   for (const ref of message.referenceImages || []) {
-    const data = await parseResponse(await fetch("https://www.hfsyapi.cn/v1/images/generations/async", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-image-2", prompt: message.prompt, size: message.size, response_format: "b64_json", reference_images: [ref] }) }));
+    const data = await parseResponse(await fetch("https://www.hfsyapi.cn/v1/images/generations/async", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "gpt-image-2", prompt: message.prompt, size: message.size, response_format: "b64_json", reference_images: [ref] }) }));
     tasks.push(data.task_id || data.id);
   }
   const urls = [];
@@ -89,7 +90,7 @@ async function pollPendingHfsyTasks(message = {}) {
     const key = message.apiKey || state.apiKey || "";
     if (!key) { await ensureHfsyAlarm(); return { ok: false, pending: true, error: "缺少 API Key" }; }
     const startedAt = Number(activeTask.startedAt) || Date.now();
-    const baseUrls = Array.isArray(activeTask.resultUrls) ? activeTask.resultUrls.filter(Boolean) : [];
+    const baseUrls = remoteImageUrls(activeTask.resultUrls);
     let changed = false;
     for (const task of batchTasks) {
       if (task.status === "SUCCESS" || task.status === "FAILURE") continue;
@@ -122,7 +123,7 @@ async function pollPendingHfsyTasks(message = {}) {
       for (const task of batchTasks) if (!["SUCCESS", "FAILURE"].includes(task.status)) { task.status = "FAILURE"; task.error = "查询超时，已停止等待（不会重新扣费）"; changed = true; }
       await appendExecutionLog("部分任务查询超时，已停止等待并保留已成功图片。", "error");
     }
-    const urls = [...new Set(baseUrls.concat(batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url)))];
+    const urls = [...new Set(baseUrls.concat(remoteImageUrls(batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url))))];
     const unresolved = batchTasks.some(t => !["SUCCESS", "FAILURE"].includes(t.status));
     const nextActive = { ...activeTask, provider: "hfsy", status: unresolved ? "POLLING" : "COMPLETE", lastPolledAt: Date.now(), resultUrls: urls };
     await chrome.storage.local.set({ batchTasks, activeTask: nextActive, lastResults: urls });
