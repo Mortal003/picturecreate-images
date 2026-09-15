@@ -51,16 +51,17 @@
     let startY = 0;
     const finishDrag = async event => {
       if (!dragging) return;
+      const wasMoved = moved;
       dragging = false;
-      if (button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
+      if (event?.pointerId !== undefined && button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
       gesturePointerId = null;
       host.style.cursor = '';
       button.style.cursor = 'pointer';
       button.classList.remove('dragging');
-      if (moved) {
+      if (wasMoved) {
         ignoreNextClick = true;
         try { await chrome.storage.local.set({ [FLOAT_POSITION_KEY]: { left: parseFloat(host.style.left), top: parseFloat(host.style.top) } }); } catch {}
-      }
+      } else ignoreNextClick = false;
       moved = false;
     };
     button.addEventListener('pointerdown', event => {
@@ -114,7 +115,7 @@
         setTimeout(() => { button.classList.remove('error'); button.textContent = original; }, 1800);
       } finally { setTimeout(() => { openLocked = false; }, 250); }
     };
-    button.onclick = event => { if (ignoreNextClick) { ignoreNextClick = false; return; } if (gesturePointerId !== null) return; openPanel(); };
+    button.onclick = event => { if (ignoreNextClick) { ignoreNextClick = false; return; } if (gesturePointerId !== null || dragging) return; openPanel(); };
     window.addEventListener('blur', event => { if (dragging) finishDrag(event); });
     restorePosition(host);
     window.addEventListener('resize', () => {
