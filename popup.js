@@ -102,6 +102,14 @@
   }
   function updateSaveModeUi() { const mode = saveMode(); const button = $("choose-folder"), label = $("folder-status"); if (button) button.disabled = mode !== "local"; if (label && mode === "downloads") label.textContent = "当前使用浏览器下载目录：商品生图/"; else if (label && mode === "local" && !directoryHandle) label.textContent = "尚未选择本地文件夹，请先选择"; }
   function installSaveModeControl(value) { const host = document.querySelector(".save-location"); if (!host || $("save-mode")) return; const label = document.createElement("label"); label.className = "save-mode-label"; label.textContent = "保存方式 "; const select = document.createElement("select"); select.id = "save-mode"; select.innerHTML = '<option value="local">指定本地文件夹</option><option value="downloads">浏览器下载目录</option>'; select.value = value === "downloads" ? "downloads" : "local"; label.appendChild(select); host.insertBefore(label, host.firstChild); select.onchange = () => { updateSaveModeUi(); chrome.storage.local.set({ saveMode: select.value }); status(select.value === "local" ? "已切换为指定本地文件夹模式。" : "已切换为浏览器下载模式。"); }; updateSaveModeUi(); }
+  async function persistHfsySubmissionSnapshot(startedAt, model, total) {
+    const snapshot = { batch: true, provider: "hfsy", model, total, startedAt, updatedAt: Date.now(), status: "POLLING", resultUrls: remoteImageUrls(resultUrls) };
+    try {
+      await chrome.storage.local.set({ activeTask: snapshot, batchTasks });
+    } catch (error) {
+      log("hfsyapi 任务快照保存失败：" + (error?.message || error), "error");
+    }
+  }
   let thinkingStartedAt = 0;
   // hfsyapi 文档使用 /v1/images/generations；兼容旧代码中的 /async 路径，避免提交到不兼容的异步端点。
   const nativeFetch = window.fetch.bind(window);
@@ -415,20 +423,28 @@
         }
         if (resultUrls.length) await finish("Agnes 生成完成，共 " + resultUrls.length + " 张。"); else throw Error("Agnes 没有成功返回图片，请查看执行日志。");
       } else {
-        const model = selectedProviderModel("hfsy"), tasks = [];
+        const model = selectedProviderModel("hfsy"), tasks = [], startedAt = Date.now();
+        let backgroundStarted = false;
+        await persistHfsySubmissionSnapshot(startedAt, model, rs.length);
         for (let i = 0; i < rs.length; i++) {
           try {
             const response = await fetch("https://www.hfsyapi.cn/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify({ model, prompt: $("prompt").value.trim(), size: $("size").value, response_format: "b64_json", reference_images: [rs[i]], n: 1 }) });
             const raw = await response.text(); let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
             const direct = responseImage(data);
-            if (response.ok && direct) { resultUrls.push(direct); batchTasks.push({ taskId: "direct-" + (i + 1), status: "SUCCESS", url: direct, referenceImage: rs[i] }); log("hfsyapi 第 " + (i + 1) + " 张已直接返回图片。"); await syncCurrentTask(); continue; }
+            if (response.ok && direct) { resultUrls.push(direct); batchTasks.push({ taskId: "direct-" + (i + 1), status: "SUCCESS", url: direct, referenceImage: rs[i] }); await persistHfsySubmissionSnapshot(startedAt, model, rs.length); log("hfsyapi 第 " + (i + 1) + " 张已直接返回图片。"); await syncCurrentTask(); continue; }
             if (!response.ok) throw Error(data.error?.message || data.message || "提交任务失败（HTTP " + response.status + "）");
             const id = data.task_id || data.id || data.data?.task_id; if (!id) throw Error("接口未返回 task_id 或图片结果");
             tasks.push({ taskId: String(id), status: "QUEUED", referenceImage: rs[i] });
-          } catch (e) { const msg = e.message || "提交任务异常"; batchTasks.push({ taskId: "submit-" + (i + 1), status: "FAILURE", error: msg, referenceImage: rs[i] }); log("hfsyapi 第 " + (i + 1) + " 张失败：" + msg, "error"); await syncCurrentTask(); }
+            batchTasks.push(tasks[tasks.length - 1]);
+            await persistHfsySubmissionSnapshot(startedAt, model, rs.length);
+            if (!backgroundStarted) {
+              backgroundStarted = true;
+              chrome.runtime.sendMessage({ type: "START_HFSY_POLL", apiKey: key }).catch(error => log("后台轮询接管启动失败：" + (error?.message || error), "error"));
+            }
+          } catch (e) { const msg = e.message || "提交任务异常"; batchTasks.push({ taskId: "submit-" + (i + 1), status: "FAILURE", error: msg, referenceImage: rs[i] }); await persistHfsySubmissionSnapshot(startedAt, model, rs.length); log("hfsyapi 第 " + (i + 1) + " 张失败：" + msg, "error"); await syncCurrentTask(); }
         }
-        batchTasks.push(...tasks);
-        if (tasks.length) { await chrome.storage.local.set({ activeTask: { batch: true, provider: "hfsy", startedAt: Date.now(), status: "POLLING", resultUrls: remoteImageUrls(resultUrls) }, batchTasks }); await syncCurrentTask("POLLING"); queueWorkspaceSave({ status: "POLLING" }); await pollHfsy(key); }
+        batchTasks = batchTasks.filter((task, index, list) => list.findIndex(item => item.taskId === task.taskId) === index);
+        if (tasks.length) { await chrome.storage.local.set({ activeTask: { batch: true, provider: "hfsy", model, total: rs.length, startedAt, updatedAt: Date.now(), status: "POLLING", resultUrls: remoteImageUrls(resultUrls) }, batchTasks }); await syncCurrentTask("POLLING"); queueWorkspaceSave({ status: "POLLING" }); await pollHfsy(key); }
         else if (resultUrls.length) await finish("hfsyapi 生成完成，共 " + resultUrls.length + " 张。");
         else throw Error("hfsyapi 没有成功返回图片，请查看执行日志。");
       }
