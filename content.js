@@ -36,9 +36,10 @@
   };
   function mountFloatButton() {
     if (document.getElementById('image-workflow-float-host')) return;
-    const host = document.createElement('div'); host.id='image-workflow-float-host'; host.style.cssText='position:fixed;right:20px;bottom:90px;z-index:2147483647;font:13px Arial,Microsoft YaHei,sans-serif';
-    host.innerHTML='<button id="iw-launch" title="打开商品生图助手" style="border:0;border-radius:999px;background:#176b45;color:#fff;padding:11px 16px;font-weight:700;box-shadow:0 8px 24px #12372347;cursor:pointer">商品生图</button>'; document.documentElement.appendChild(host);
-    const button = host.querySelector('#iw-launch');
+    const host = document.createElement('div'); host.id='image-workflow-float-host'; host.style.cssText='position:fixed;right:20px;bottom:90px;z-index:2147483647';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML='<style>:host{font:13px Arial,"Microsoft YaHei",sans-serif}button{appearance:none;border:1px solid #bfdbfe;border-radius:999px;background:linear-gradient(135deg,#60a5fa,#38bdf8);color:#fff;padding:11px 16px;font:700 13px Arial,"Microsoft YaHei",sans-serif;box-shadow:0 8px 24px rgba(30,100,180,.28);cursor:pointer;outline:none;transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}button:hover{filter:saturate(1.08) brightness(1.03);box-shadow:0 10px 28px rgba(30,100,180,.36);transform:translateY(-1px)}button:focus-visible{box-shadow:0 0 0 3px #fff,0 0 0 6px #60a5fa}button:active,button.dragging{transform:scale(.97);box-shadow:0 5px 14px rgba(30,100,180,.28);cursor:grabbing}button.loading{cursor:wait;filter:saturate(.82)}button.error{background:#fff;color:#b42318;border-color:#fecaca;box-shadow:0 8px 24px rgba(180,50,40,.18)}</style><button id="iw-launch" type="button" title="打开商品生图助手">商品生图</button>'; document.documentElement.appendChild(host);
+    const button = root.querySelector('#iw-launch');
     let dragging = false;
     let moved = false;
     let openLocked = false;
@@ -55,6 +56,7 @@
       gesturePointerId = null;
       host.style.cursor = '';
       button.style.cursor = 'pointer';
+      button.classList.remove('dragging');
       if (moved) {
         ignoreNextClick = true;
         try { await chrome.storage.local.set({ [FLOAT_POSITION_KEY]: { left: parseFloat(host.style.left), top: parseFloat(host.style.top) } }); } catch {}
@@ -74,6 +76,7 @@
       button.setPointerCapture?.(event.pointerId);
       host.style.cursor = 'grabbing';
       button.style.cursor = 'grabbing';
+      button.classList.add('dragging');
     });
     button.addEventListener('pointermove', event => {
       if (!dragging) return;
@@ -91,6 +94,8 @@
       if (openLocked) return;
       openLocked = true;
       const original = button.textContent;
+      button.classList.remove('error');
+      button.classList.add('loading');
       button.textContent = '正在打开…';
       try {
         const response = await Promise.race([
@@ -98,11 +103,15 @@
           new Promise((_, reject) => setTimeout(() => reject(new Error('打开侧边栏超时，请刷新当前网页')), 2000))
         ]);
         if (!response?.ok) throw new Error(response?.error || '打开侧边栏失败，请刷新当前网页');
+        button.classList.remove('loading');
         button.textContent = '已打开';
+        setTimeout(() => { button.textContent = original; button.title = '打开商品生图助手'; }, 1000);
       } catch (error) {
+        button.classList.remove('loading');
+        button.classList.add('error');
         button.textContent = '刷新页面';
         button.title = error.message || '插件已更新，请刷新当前网页';
-        setTimeout(() => { button.textContent = original; }, 1800);
+        setTimeout(() => { button.classList.remove('error'); button.textContent = original; }, 1800);
       } finally { setTimeout(() => { openLocked = false; }, 250); }
     };
     button.onclick = event => { if (ignoreNextClick) { ignoreNextClick = false; return; } if (gesturePointerId !== null) return; openPanel(); };
