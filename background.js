@@ -93,7 +93,7 @@ async function pollPendingHfsyTasks(message = {}) {
   hfsyPollPromise = (async () => {
     const state = await chrome.storage.local.get(["activeTask", "batchTasks", "apiKey"]);
     const activeTask = state.activeTask;
-    const batchTasks = Array.isArray(state.batchTasks) ? state.batchTasks : [];
+    const batchTasks = (Array.isArray(state.batchTasks) ? state.batchTasks : []).map((task, index) => ({ provider: "hfsy", imageIndex: Number.isInteger(task?.imageIndex) ? task.imageIndex : index, updatedAt: Number(task?.updatedAt) || Date.now(), ...task }));
     if (!activeTask?.batch || (activeTask.provider && activeTask.provider !== "hfsy") || !batchTasks.length) {
       try { await chrome.alarms.clear(HFSY_POLL_ALARM); } catch {}
       return { ok: true, pending: false };
@@ -114,15 +114,15 @@ async function pollPendingHfsyTasks(message = {}) {
         const imageUrl = findImage(data);
         const stateName = String(data.status || data.data?.status || (apiError ? "FAILURE" : "")).toUpperCase();
         if (imageUrl && response.ok) {
-          task.status = "SUCCESS"; task.url = imageUrl; changed = true;
+          task.status = "SUCCESS"; task.url = imageUrl; task.updatedAt = Date.now(); changed = true;
           await appendExecutionLog("任务 " + task.taskId + " 已返回图片", "info");
         } else if (!response.ok || apiError || ["FAILURE", "FAILED", "ERROR"].includes(stateName)) {
-          task.status = "FAILURE";
+          task.status = "FAILURE"; task.updatedAt = Date.now();
           task.error = hfsyFailureMessage(data, response.status, task.taskId);
           changed = true;
           await appendExecutionLog("任务 " + task.taskId + " 失败：" + task.error, "error");
         } else if (["SUCCESS", "SUCCEEDED", "COMPLETED", "DONE", "FINISHED"].includes(stateName)) {
-          task.status = "FAILURE"; task.error = "任务成功但没有返回图片 URL"; changed = true;
+          task.status = "FAILURE"; task.error = "任务成功但没有返回图片 URL"; task.updatedAt = Date.now(); changed = true;
           await appendExecutionLog("任务 " + task.taskId + " 成功但缺少图片 URL", "error");
         }
       } catch (e) {
@@ -131,12 +131,14 @@ async function pollPendingHfsyTasks(message = {}) {
       }
     }
     if (Date.now() - startedAt >= 600000) {
-      for (const task of batchTasks) if (!["SUCCESS", "FAILURE"].includes(task.status)) { task.status = "FAILURE"; task.error = "查询超时，已停止等待（不会重新扣费）"; changed = true; }
+      for (const task of batchTasks) if (!["SUCCESS", "FAILURE"].includes(task.status)) { task.status = "FAILURE"; task.error = "查询超时，已停止等待（不会重新扣费）"; task.updatedAt = Date.now(); changed = true; }
       await appendExecutionLog("部分任务查询超时，已停止等待并保留已成功图片。", "error");
     }
     const urls = [...new Set(baseUrls.concat(remoteImageUrls(batchTasks.filter(t => t.status === "SUCCESS" && t.url).map(t => t.url))))];
     const unresolved = batchTasks.some(t => !["SUCCESS", "FAILURE"].includes(t.status));
-    const nextActive = { ...activeTask, provider: "hfsy", status: unresolved ? "POLLING" : "COMPLETE", lastPolledAt: Date.now(), resultUrls: urls };
+    const succeeded = batchTasks.filter(task => task.status === "SUCCESS").length;
+    const failed = batchTasks.filter(task => task.status === "FAILURE").length;
+    const nextActive = { ...activeTask, provider: "hfsy", status: unresolved ? "POLLING" : (succeeded ? "COMPLETE" : "FAILED"), total: Math.max(Number(activeTask.total) || 0, batchTasks.length), finished: succeeded + failed, succeeded, failed, lastPolledAt: Date.now(), updatedAt: Date.now(), resultUrls: urls, failures: batchTasks.filter(task => task.status === "FAILURE").map(task => ({ taskId: task.taskId || "", imageIndex: task.imageIndex, error: task.error || "生成失败" })) };
     await chrome.storage.local.set({ batchTasks, activeTask: nextActive, lastResults: urls });
     if (unresolved) await ensureHfsyAlarm();
     else {
