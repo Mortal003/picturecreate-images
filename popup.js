@@ -142,20 +142,48 @@
   async function persistCustomImageCache(values) { try { const ids = []; for (const value of values) ids.push(await cacheBlob(await dataUrlBlob(value))); await chrome.storage.local.set({ workspaceCustomImageIds: ids }); return ids; } catch (error) { log("本地参考图缓存失败，将只保留当前窗口预览：" + (error.message || "IndexedDB 不可用"), "error"); return []; } }
   async function restoreCustomImageCache() { try { const state = await chrome.storage.local.get("workspaceCustomImageIds"); const restored = []; for (const id of (state.workspaceCustomImageIds || [])) { const blob = await readCachedBlob(id); if (blob) restored.push(URL.createObjectURL(blob)); } if (restored.length) { customImages = restored; renderImages(); } } catch (error) { log("本地参考图缓存恢复失败：" + (error.message || "IndexedDB 不可用"), "error"); } }
   async function restoreWorkspace() { if (workspaceHydrated) return; workspaceHydrated = true; try { const state = await chrome.storage.local.get([WORKSPACE_KEY, "workspaceResultCacheIds"]); const ws = state[WORKSPACE_KEY]; if (!ws || ws.version !== 1) return; if (ws.pageUrl && ws.pageUrl !== location.href) return; if (ws.prompt && $("prompt") && !$('prompt').value) $("prompt").value = ws.prompt; if (Array.isArray(ws.resultUrls) && ws.resultUrls.length) resultUrls = ws.resultUrls; const cachedResults = []; for (const id of (state.workspaceResultCacheIds || [])) { const blob = await readCachedBlob(id); if (blob) cachedResults.push(URL.createObjectURL(blob)); } if (cachedResults.length) resultUrls = cachedResults; if (Array.isArray(ws.batchTasks) && ws.batchTasks.length) batchTasks = ws.batchTasks; if (Array.isArray(ws.selectedIndexes)) selected = new Set(ws.selectedIndexes.filter(Number.isInteger)); if (ws.progress) setProgress(ws.progress); if (ws.thinkingText && $("thinking-text")) $("thinking-text").textContent = ws.thinkingText; if (resultUrls.length) renderResults(); if (selected.size) renderImages(); log("已恢复上次侧边栏工作区状态。", "info"); } catch (error) { log("工作区恢复失败：" + (error.message || "存储不可用"), "error"); } }
-  const MAX_REFERENCE_BYTES = 5 * 1024 * 1024;
   function referenceInfo(value) {
     const text = String(value || "");
     if (/^https?:\/\//i.test(text)) return { kind: "url", value: text };
+    if (/^blob:/i.test(text)) return { kind: "blob", value: text };
     const match = text.match(/^data:(image\/[\w.+-]+);base64,(.+)$/i);
     if (!match) return { kind: "unsupported", value: text };
     const bytes = Math.floor(match[2].length * 3 / 4) - (match[2].endsWith("==") ? 2 : match[2].endsWith("=") ? 1 : 0);
     return { kind: "data", value: text, mime: match[1].toLowerCase(), bytes };
   }
+  async function blobUrlToDataUri(value) {
+    const response = await fetch(value);
+    if (!response.ok) throw Error("读取本地图片失败（HTTP " + response.status + "）");
+    const blob = await response.blob();
+    if (!/^image\//i.test(blob.type)) throw Error("本地图片格式不是 image/*（" + (blob.type || "未知") + "）");
+    if (blob.size > MAX_REFERENCE_BYTES) throw Error("本地图片超过 5 MB，hfsyapi 不接受。");
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || Error("本地图片读取失败"));
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function normalizeReferenceImages(values) {
+    const valid = [], failures = [];
+    for (const [index, value] of values.entries()) {
+      try {
+        const info = referenceInfo(value);
+        if (info.kind === "blob") valid.push(await blobUrlToDataUri(info.value));
+        else if (info.kind === "unsupported") failures.push({ index, message: "第 " + (index + 1) + " 张参考图不是公开 URL、Blob URL 或图片 Data URI。" });
+        else if (info.kind === "data" && info.bytes > MAX_REFERENCE_BYTES) failures.push({ index, message: "第 " + (index + 1) + " 张本地图片超过 5 MB，hfsyapi 不接受。" });
+        else valid.push(info.value);
+      } catch (error) {
+        failures.push({ index, message: "第 " + (index + 1) + " 张参考图转换失败：" + (error?.message || error) });
+      }
+    }
+    return { valid, failures };
+  }
   function validateReferenceImages(values) {
     const valid = [], failures = [];
     values.forEach((value, index) => {
       const info = referenceInfo(value);
-      if (info.kind === "unsupported") failures.push({ index, message: "第 " + (index + 1) + " 张参考图不是公开 URL 或图片 Data URI。" });
+      if (info.kind === "unsupported" || info.kind === "blob") failures.push({ index, message: "第 " + (index + 1) + " 张参考图需要在提交前转换。" });
       else if (info.kind === "data" && info.bytes > MAX_REFERENCE_BYTES) failures.push({ index, message: "第 " + (index + 1) + " 张本地图片超过 5 MB，hfsyapi 不接受。" });
       else valid.push(value);
     });
@@ -336,7 +364,7 @@
   async function generate() {
     const rawRefs = selectedRefs(), key = $("api-key").value.trim(), provider = $("provider").value;
     if (!rawRefs.length) return;
-    const checked = validateReferenceImages(rawRefs);
+    const checked = await normalizeReferenceImages(rawRefs);
     checked.failures.forEach(item => log(item.message, "error"));
     if (!checked.valid.length) { status("没有可提交的参考图片，请检查图片格式和大小。", true); return; }
     const rs = checked.valid;
