@@ -4,6 +4,7 @@ const HFSY_QUERY_URL = "https://www.hfsyapi.cn/v1/images/generations/";
 let hfsyPollPromise = null;
 const sidePanelStates = new Map();
 const remoteImageUrls = values => (Array.isArray(values) ? values : []).filter(value => typeof value === "string" && /^https?:\/\//i.test(value));
+const hfsyFailureMessage = (data, status, taskId) => { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); return /do request failed/i.test(String(reason)) ? "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason : reason; };
 
 chrome.action.onClicked.addListener(async tab => { try { await chrome.sidePanel.open({ windowId: tab.windowId }); } catch (e) { console.warn("无法打开侧边栏", e); } });
 
@@ -117,7 +118,7 @@ async function pollPendingHfsyTasks(message = {}) {
           await appendExecutionLog("任务 " + task.taskId + " 已返回图片", "info");
         } else if (!response.ok || apiError || ["FAILURE", "FAILED", "ERROR"].includes(stateName)) {
           task.status = "FAILURE";
-          task.error = apiError?.message || data.fail_reason || data.data?.fail_reason || data.message || ("中转站任务失败（" + response.status + "）");
+          task.error = hfsyFailureMessage(data, response.status, task.taskId);
           changed = true;
           await appendExecutionLog("任务 " + task.taskId + " 失败：" + task.error, "error");
         } else if (["SUCCESS", "SUCCEEDED", "COMPLETED", "DONE", "FINISHED"].includes(stateName)) {

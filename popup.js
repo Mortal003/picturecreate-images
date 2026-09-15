@@ -315,6 +315,7 @@
   function customFirstValue(data, paths) { for (const path of String(paths || "").split(",").map(item => item.trim()).filter(Boolean)) { const value = customPathValue(data, path); if (value !== undefined && value !== null && value !== "") return { value, path }; } return { value: undefined, path: "" }; }
   function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value !== "string") return ""; if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; return ""; }
   function customErrorMessage(data, fallback) { return data?.error?.message || data?.data?.error?.message || data?.fail_reason || data?.data?.fail_reason || data?.message || fallback; }
+  function hfsyFailureMessage(data, status, taskId) { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); if (/do request failed/i.test(String(reason))) return "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason; return reason; }
   function customRequestBody(cfg, ref) {
     const prompt = $("prompt").value.trim(), size = $("size").value;
     if (cfg.protocol === "agnes") {
@@ -448,7 +449,7 @@
             log("任务 " + t.taskId + " 已返回图片", "info");
           } else if (!response.ok || apiError || ["FAILURE", "FAILED", "ERROR"].includes(state)) {
             t.status = "FAILURE";
-            t.error = apiError?.message || d.fail_reason || d.data?.fail_reason || d.message || ("中转站任务失败（" + response.status + "）");
+            t.error = hfsyFailureMessage(d, response.status, t.taskId);
             log("任务 " + t.taskId + " 失败：" + t.error, "error");
           } else if (["SUCCESS", "SUCCEEDED", "COMPLETED", "DONE", "FINISHED"].includes(state)) {
             t.status = "FAILURE";
