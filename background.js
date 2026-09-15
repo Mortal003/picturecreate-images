@@ -166,6 +166,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  if (message?.type === "GET_HFSY_TASK_STATE") {
+    (async () => {
+      try {
+        const state = await chrome.storage.local.get(["activeTask", "batchTasks", "lastResults"]);
+        const activeTask = state.activeTask || null;
+        const batchTasks = Array.isArray(state.batchTasks) ? state.batchTasks : [];
+        const lastResults = remoteImageUrls(state.lastResults || activeTask?.resultUrls || []);
+        const pending = activeTask?.provider === "hfsy" && activeTask.status === "POLLING" && batchTasks.some(task => !["SUCCESS", "FAILURE"].includes(task.status));
+        if (pending) await ensureHfsyAlarm();
+        sendResponse({ ok: true, activeTask, batchTasks, lastResults });
+      } catch (error) {
+        sendResponse({ ok: false, error: error.message || "读取后台任务状态失败" });
+      }
+    })();
+    return true;
+  }
   if (message?.type === "START_HFSY_POLL" || message?.type === "POLL_HFSY_NOW") {
     (async () => { try { if (message.apiKey) await chrome.storage.local.set({ apiKey: message.apiKey }); await ensureHfsyAlarm(); const result = await pollPendingHfsyTasks(message); sendResponse(result); } catch (error) { sendResponse({ ok: false, error: error.message }); } })();
     return true;
