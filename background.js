@@ -2,6 +2,7 @@ const HFSY_POLL_ALARM = "hfsy-task-poll";
 const HFSY_GENERATE_URL = "https://www.hfsyapi.cn/v1/images/generations";
 const HFSY_QUERY_URL = "https://www.hfsyapi.cn/v1/images/generations/";
 let hfsyPollPromise = null;
+const sidePanelStates = new Map();
 const remoteImageUrls = values => (Array.isArray(values) ? values : []).filter(value => typeof value === "string" && /^https?:\/\//i.test(value));
 
 chrome.action.onClicked.addListener(async tab => { try { await chrome.sidePanel.open({ windowId: tab.windowId }); } catch (e) { console.warn("无法打开侧边栏", e); } });
@@ -151,8 +152,18 @@ if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => pollPen
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "OPEN_SIDE_PANEL") {
-    (async () => { try { if (!chrome.sidePanel || sender?.tab?.windowId === undefined) throw new Error("当前浏览器不支持侧边栏"); await chrome.sidePanel.open({ windowId: sender.tab.windowId }); sendResponse({ ok: true }); } catch (error) { sendResponse({ ok: false, error: error.message }); } })();
+    (async () => { try { const windowId = sender?.tab?.windowId ?? message.windowId; if (!chrome.sidePanel || windowId === undefined) throw new Error("当前浏览器不支持侧边栏"); await chrome.sidePanel.open({ windowId }); sidePanelStates.set(windowId, true); sendResponse({ ok: true, open: true }); } catch (error) { sendResponse({ ok: false, open: false, error: error.message }); } })();
     return true;
+  }
+  if (message?.type === "TOGGLE_SIDE_PANEL") {
+    (async () => { const windowId = sender?.tab?.windowId ?? message.windowId; const isOpen = sidePanelStates.get(windowId) === true; try { if (!chrome.sidePanel || windowId === undefined) throw new Error("当前浏览器不支持侧边栏"); if (isOpen) { if (typeof chrome.sidePanel.close !== "function") throw new Error("当前浏览器不支持程序化关闭侧边栏，请在侧边栏顶部手动关闭。"); await chrome.sidePanel.close({ windowId }); sidePanelStates.set(windowId, false); sendResponse({ ok: true, open: false }); } else { await chrome.sidePanel.open({ windowId }); sidePanelStates.set(windowId, true); sendResponse({ ok: true, open: true }); } } catch (error) { sendResponse({ ok: false, open: isOpen, error: error.message }); } })();
+    return true;
+  }
+  if (message?.type === "SIDE_PANEL_VISIBILITY") {
+    const windowId = sender?.tab?.windowId ?? message.windowId;
+    if (windowId !== undefined) sidePanelStates.set(windowId, message.visible === true);
+    sendResponse({ ok: true });
+    return false;
   }
   if (message?.type === "START_HFSY_POLL" || message?.type === "POLL_HFSY_NOW") {
     (async () => { try { if (message.apiKey) await chrome.storage.local.set({ apiKey: message.apiKey }); await ensureHfsyAlarm(); const result = await pollPendingHfsyTasks(message); sendResponse(result); } catch (error) { sendResponse({ ok: false, error: error.message }); } })();

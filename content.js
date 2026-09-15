@@ -91,31 +91,31 @@
     button.addEventListener('pointerup', finishDrag);
     button.addEventListener('pointercancel', finishDrag);
     button.addEventListener('lostpointercapture', event => { if (dragging) finishDrag(event); });
-    const openPanel = async () => {
+    const togglePanel = async () => {
       if (openLocked) return;
       openLocked = true;
-      const original = button.textContent;
+      const original = '商品生图';
       button.classList.remove('error');
       button.classList.add('loading');
-      button.textContent = '正在打开…';
+      button.textContent = '正在切换…';
       try {
         const response = await Promise.race([
-          chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('打开侧边栏超时，请刷新当前网页')), 2000))
+          chrome.runtime.sendMessage({ type: 'TOGGLE_SIDE_PANEL' }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('侧边栏操作超时，请刷新当前网页')), 2000))
         ]);
-        if (!response?.ok) throw new Error(response?.error || '打开侧边栏失败，请刷新当前网页');
+        if (!response?.ok) throw new Error(response?.error || '侧边栏操作失败，请刷新当前网页');
         button.classList.remove('loading');
-        button.textContent = '已打开';
-        setTimeout(() => { button.textContent = original; button.title = '打开商品生图助手'; }, 1000);
+        button.textContent = response.open ? '已打开' : '已关闭';
+        setTimeout(() => { button.textContent = original; button.title = '打开/关闭商品生图助手'; }, 1000);
       } catch (error) {
         button.classList.remove('loading');
         button.classList.add('error');
         button.textContent = '刷新页面';
         button.title = error.message || '插件已更新，请刷新当前网页';
-        setTimeout(() => { button.classList.remove('error'); button.textContent = original; }, 1800);
+        setTimeout(() => { button.classList.remove('error'); button.textContent = original; button.title = '打开/关闭商品生图助手'; }, 1800);
       } finally { setTimeout(() => { openLocked = false; }, 250); }
     };
-    button.onclick = event => { if (ignoreNextClick) { ignoreNextClick = false; return; } if (gesturePointerId !== null || dragging) return; openPanel(); };
+    button.onclick = event => { if (ignoreNextClick) { ignoreNextClick = false; return; } if (gesturePointerId !== null || dragging) return; togglePanel(); };
     window.addEventListener('blur', event => { if (dragging) finishDrag(event); });
     restorePosition(host);
     window.addEventListener('resize', () => {

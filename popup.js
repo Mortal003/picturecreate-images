@@ -591,6 +591,9 @@
     await restoreCurrentTask();
   };
   setTimeout(restoreCurrentTaskWhenReady, 0);
+  document.addEventListener("visibilitychange", async () => {
+    try { const currentWindow = await chrome.windows.getCurrent(); await chrome.runtime.sendMessage({ type: "SIDE_PANEL_VISIBILITY", windowId: currentWindow?.id, visible: !document.hidden }); } catch {}
+  });
   window.addEventListener("pagehide", () => {
     if (!currentTask || currentTask.status !== "GENERATING" || currentTask.provider === "hfsy") return;
     writeCurrentTask({ status: "INTERRUPTED", finished: Math.min(currentTask.total || 0, resultUrls.length + taskFailures().length), resultUrls: remoteImageUrls(resultUrls), failures: taskFailures(), error: "侧边栏已关闭，未完成任务不会自动重复提交。" });
