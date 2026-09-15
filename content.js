@@ -41,7 +41,9 @@
     const button = host.querySelector('#iw-launch');
     let dragging = false;
     let moved = false;
-    let suppressClick = false;
+    let openLocked = false;
+    let gesturePointerId = null;
+    let ignoreNextClick = false;
     let offsetX = 0;
     let offsetY = 0;
     let startX = 0;
@@ -50,18 +52,21 @@
       if (!dragging) return;
       dragging = false;
       if (button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
+      gesturePointerId = null;
       host.style.cursor = '';
       button.style.cursor = 'pointer';
       if (moved) {
-        suppressClick = true;
+        ignoreNextClick = true;
         try { await chrome.storage.local.set({ [FLOAT_POSITION_KEY]: { left: parseFloat(host.style.left), top: parseFloat(host.style.top) } }); } catch {}
       }
+      moved = false;
     };
     button.addEventListener('pointerdown', event => {
       if (event.button !== undefined && event.button !== 0) return;
       const rect = host.getBoundingClientRect();
       dragging = true;
       moved = false;
+      gesturePointerId = event.pointerId;
       startX = event.clientX;
       startY = event.clientY;
       offsetX = event.clientX - rect.left;
@@ -81,7 +86,27 @@
     });
     button.addEventListener('pointerup', finishDrag);
     button.addEventListener('pointercancel', finishDrag);
-    button.onclick=async event=>{if(suppressClick){suppressClick=false;return;}try{await chrome.runtime.sendMessage({type:'OPEN_SIDE_PANEL'});}catch{}};
+    button.addEventListener('lostpointercapture', event => { if (dragging) finishDrag(event); });
+    const openPanel = async () => {
+      if (openLocked) return;
+      openLocked = true;
+      const original = button.textContent;
+      button.textContent = '正在打开…';
+      try {
+        const response = await Promise.race([
+          chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('打开侧边栏超时，请刷新当前网页')), 2000))
+        ]);
+        if (!response?.ok) throw new Error(response?.error || '打开侧边栏失败，请刷新当前网页');
+        button.textContent = '已打开';
+      } catch (error) {
+        button.textContent = '刷新页面';
+        button.title = error.message || '插件已更新，请刷新当前网页';
+        setTimeout(() => { button.textContent = original; }, 1800);
+      } finally { setTimeout(() => { openLocked = false; }, 250); }
+    };
+    button.onclick = event => { if (ignoreNextClick) { ignoreNextClick = false; return; } if (gesturePointerId !== null) return; openPanel(); };
+    window.addEventListener('blur', event => { if (dragging) finishDrag(event); });
     restorePosition(host);
     window.addEventListener('resize', () => {
       const applied = applyPosition(host, { left: parseFloat(host.style.left), top: parseFloat(host.style.top) });
