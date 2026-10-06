@@ -102,6 +102,7 @@
                 <option value="auto">自动识别（推荐）</option>
                 <option value="agnes">Agnes 图像协议</option>
                 <option value="hfsy">GPT-image / hfsyapi 协议</option>
+                <option value="hfsy-task-catalog">任务目录图像协议（/v1/image/create）</option>
                 <option value="openai">通用 OpenAI 图像协议</option>
                 <option value="advanced">其他接口（高级）</option>
               </select></label
@@ -111,8 +112,12 @@
                 id="custom-base-url"
                 placeholder="https://api.example.com/v1" /></label
             ><label
+              >内置模型<select id="custom-model-preset">
+                <option value="">自定义模型（手动填写）</option>
+              </select></label
+            ><label
               >模型名称<input id="custom-model" value="gpt-image-2" /></label
-            >
+            ><p id="custom-model-hint" class="custom-protocol-hint" hidden></p>
             <p id="custom-protocol-hint" class="custom-protocol-hint">
               必填：Base URL、API Key、模型名称。协议会自动补齐常见接口所需参数。
             </p>
@@ -252,6 +257,7 @@
       </section>
       <footer>固定保存规则：商品生图/YYYYMMDD-HHMMSS_数量张_序号/</footer>
     </main>
+    <script src="model-catalog.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
