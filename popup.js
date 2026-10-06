@@ -414,8 +414,8 @@
   }
   function resolvedCustomConfig(rawConfig) {
     const cfg = { ...rawConfig, protocol: resolveCustomProtocol(rawConfig), catalog: rawConfig.catalog || catalogEntry(rawConfig.model) };
-    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: cfg.catalog.queryMethod || "POST", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
-    if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "POST", mode: "async", inputMode: "reference", taskIdPaths: "task_id,id,data.task_id", statusPaths: "status,data.status", resultPaths: "images[0].url,data[0].url,result_url,data.result_url,images[0].b64_json,data[0].b64_json", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED", catalogSize: $("size")?.value || "1K" };
+    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: cfg.catalog.queryMethod || "GET", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
+    if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "GET", mode: "async", inputMode: "reference", taskIdPaths: "task_id,id,data.task_id", statusPaths: "status,data.status,task_status,data.task_status", resultPaths: "images[0].url,data.images[0].url,data[0].url,result_url,data.result_url,output[0].url,images[0].b64_json,data[0].b64_json", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED", catalogSize: $("size")?.value || "1K" };
     if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
     if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url,data[0].url,data[0].b64_json,data[0].b64_data", successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
     if (cfg.protocol === "openai") return { ...cfg, generatePath: "/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
@@ -428,7 +428,7 @@
   }
   function customPathValue(data, path) { const parts = String(path || "").trim().replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean); let value = data; for (const part of parts) { if (value === null || value === undefined || !Object.prototype.hasOwnProperty.call(Object(value), part)) return undefined; value = value[part]; } return value; }
   function customFirstValue(data, paths) { for (const path of String(paths || "").split(",").map(item => item.trim()).filter(Boolean)) { const value = customPathValue(data, path); if (value !== undefined && value !== null && value !== "") return { value, path }; } return { value: undefined, path: "" }; }
-  function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value !== "string") return ""; if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; return ""; }
+  function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value === "string") { if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; } return responseImage(data); }
   function customErrorMessage(data, fallback) { return data?.error?.message || data?.data?.error?.message || data?.fail_reason || data?.data?.fail_reason || data?.message || fallback; }
   function hfsyFailureMessage(data, status, taskId) { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); if (/do request failed/i.test(String(reason))) return "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason; return reason; }
   function customRequestBody(cfg, ref) {
@@ -444,6 +444,22 @@
     return body;
   }
   async function customRequest(url, options, stage) { let response; try { response = await fetch(url, options); } catch (error) { throw Error(stage + "网络请求失败：" + (error?.message || "Failed to fetch") + "。请检查 Base URL、扩展站点权限和中转站可访问性。"); } const raw = await response.text(); let data; try { data = raw ? JSON.parse(raw) : {}; } catch { throw Error(stage + "返回不是 JSON（HTTP " + response.status + "）：" + raw.slice(0, 160)); } if (!response.ok) throw Error(customErrorMessage(data, stage + "失败（HTTP " + response.status + "）")); return data; }
+  async function customQueryRequest(cfg, url, headers, taskId) {
+    if (!/^https?:\/\//i.test(url)) throw Error("查询地址不是完整 URL：" + url);
+    const preferred = cfg.queryMethod || "GET";
+    const request = method => customRequest(url, { method, headers }, "任务 " + taskId + " 查询（" + method + "）");
+    try { return await request(preferred); }
+    catch (error) {
+      const message = String(error?.message || error);
+      const incompatible = /Invalid URL\s*\(\s*(GET|POST)|method not allowed|HTTP\s*405|不支持.*方法/i.test(message);
+      if (cfg.protocol === "hfsy-task-catalog" && incompatible) {
+        const fallback = preferred.toUpperCase() === "GET" ? "POST" : "GET";
+        log("任务 " + taskId + " 查询接口拒绝 " + preferred.toUpperCase() + "，兼容尝试 " + fallback + "。", "info");
+        return await request(fallback);
+      }
+      throw error;
+    }
+  }
   async function generateCustom(rawConfig, refs, key) {
     const cfg = resolvedCustomConfig({ ...customConfig(), ...rawConfig });
     if (!cfg.base) throw Error("请先填写自定义中转站 Base URL，或重新选择一个内置模型预设。");
@@ -467,7 +483,7 @@
       for (const task of tasks) {
         const startedAt = Date.now(); let complete = false;
         while (!complete && Date.now() - startedAt < 600000) {
-          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const queryOptions = { headers }; if (cfg.queryMethod) queryOptions.method = cfg.queryMethod; const data = await customRequest(joinCustomUrl(cfg.base, path), queryOptions, "任务 " + task.id + " 查询"); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
+          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
           catch (error) { recordFailure(task.index, "异步查询", error); complete = true; break; }
           await sleep(2500);
         }
