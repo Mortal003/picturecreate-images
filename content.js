@@ -140,19 +140,10 @@
       try{
         if(!/dianxiaomi\.com$/.test(location.hostname))throw Error('当前页面不是店小秘产品编辑页。');
         const choose=[...scope.querySelectorAll('button')].find(e=>visible(e)&&txt(e)==='选择图片');
-        const edit=[...scope.querySelectorAll('a')].find(e=>visible(e)&&txt(e).includes('编辑图片'));
-        if(!choose||!edit)throw Error('未找到产品图片操作按钮。');
-        const before=realCount(); await hoverClick(edit); await wait(450); menu('清空图片');
-        let confirmed=false;
-        for(let i=0;i<40;i++){
-          await wait(150);
-          const dialog=[...document.querySelectorAll('.ant-modal-confirm,.ant-modal-wrap,[role="dialog"]')].find(x=>visible(x)&&/(清空全部图片|清空图片)/.test(txt(x).replace(/\s+/g,'')));
-          if(!dialog)continue;
-          const ok=dialog.querySelector('.ant-modal-confirm-btns .ant-btn-primary')||[...dialog.querySelectorAll('button')].find(b=>visible(b)&&/^(确定|确认)$/.test(txt(b).replace(/\s+/g,'')));
-          if(ok){ok.click();confirmed=true;break;}
-        }
-        if(!confirmed)throw Error('未检测到清空图片确认框。');
-        await wait(1200); const afterClear=realCount(); if(afterClear>=before&&before>0)throw Error('清空图片后原图仍存在，已停止上传。');
+        if(!choose)throw Error('未找到产品图片操作按钮。');
+        const before=realCount();
+        // 历史流程曾是：编辑图片 → 清空图片 → 确认清空 → 网络图片 → 添加。
+        // 当前追加上传流程保留该说明，但运行时不执行清空，避免删除客户已有图片。
         await hoverClick(choose); await wait(450); menu('网络图片'); await wait(500);
         const modal=[...document.querySelectorAll('.ant-modal-wrap,[role="dialog"]')].find(e=>visible(e)&&txt(e).includes('从网络地址(URL)选择图片'));
         if(!modal)throw Error('未找到网络图片输入弹窗。');
@@ -164,8 +155,8 @@
         area.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); area.dispatchEvent(new Event('change',{bubbles:true})); await wait(250); add.click();
         await wait(10000);
         const delayedUploaded=realCount();
-        if(delayedUploaded<links.length)throw Error('添加后等待 10 秒，检测到 '+delayedUploaded+' 张图片，预期 '+links.length+' 张。');
-        sendResponse({ok:true,before,afterClear,uploaded:delayedUploaded,expected:links.length});
+        if(delayedUploaded<before+links.length)throw Error('添加后等待 10 秒，检测到 '+delayedUploaded+' 张图片，预期至少 '+(before+links.length)+' 张。');
+        sendResponse({ok:true,before,uploaded:delayedUploaded,added:links.length,expected:before+links.length});
       }catch(error){sendResponse({ok:false,error:error.message});}
     })(); return true;
   });
