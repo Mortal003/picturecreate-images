@@ -61,6 +61,16 @@
           rows="4"
           placeholder="例如：保持产品主体不变，生成高质量电商主图"
         ></textarea>
+        <div class="prompt-presets">
+          <label>提示词名称<input id="prompt-preset-name" placeholder="例如：白底主图" /></label>
+          <div class="prompt-preset-actions">
+            <button id="save-prompt-preset" class="folder-button" type="button">保存提示词</button>
+            <select id="prompt-preset-select"><option value="">选择已保存提示词</option></select>
+            <button id="load-prompt-preset" class="folder-button" type="button">载入</button>
+            <button id="delete-prompt-preset" class="text-button" type="button">删除</button>
+          </div>
+          <p class="hint">提示词保存在当前浏览器的扩展本地数据中；同名保存会覆盖原内容。</p>
+        </div>
         <div class="fields">
           <label
             >比例<select id="size">

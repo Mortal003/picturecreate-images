@@ -4,7 +4,7 @@
   licenseLoader.src = 'license.js';
   document.head.appendChild(licenseLoader);
   const $ = id => document.getElementById(id);
-  let images = [], customImages = [], selected = new Set(), resultUrls = [], history = [];
+  let images = [], customImages = [], selected = new Set(), resultUrls = [], history = [], promptPresets = [];
   let batchTasks = [], pollTimer = null, thinkingTimer = null, directoryHandle = null;
   let activeProvider = "agnes";
   let providerUiHydrated = false;
@@ -16,6 +16,11 @@
   const pageConnectionMessage = error => /Receiving end does not exist|Could not establish connection/i.test(String(error?.message || error || "")) ? "当前页面尚未连接插件。扩展重新加载后请刷新商品编辑页，再重新扫描或上传。" : (error?.message || String(error || "操作失败"));
   const maskedKey = value => { const key = String(value || "").trim(); return key ? "已保存（后四位 " + key.slice(-4) + "）" : "未设置 API Key"; };
   function setProviderSaveStatus(message, error = false) { const el = $("provider-save-status"); if (el) { el.textContent = message; el.classList.toggle("error", error); } }
+  async function readPromptPresets() { try { const state = await chrome.storage.local.get("promptPresetsV1"); promptPresets = Array.isArray(state.promptPresetsV1) ? state.promptPresetsV1.filter(item => item && item.name && typeof item.text === "string") : []; } catch (error) { promptPresets = []; log("提示词模板读取失败：" + (error.message || error), "error"); } renderPromptPresets(); }
+  function renderPromptPresets() { const select = $("prompt-preset-select"); if (!select) return; select.innerHTML = '<option value="">选择已保存提示词</option>'; promptPresets.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "zh-CN")).forEach(item => { const option = document.createElement("option"); option.value = item.id; option.textContent = item.name; select.appendChild(option); }); }
+  async function savePromptPreset() { const name = $("prompt-preset-name")?.value.trim() || "", textValue = $("prompt")?.value || ""; if (!name) return status("请先填写提示词名称。", true); if (!textValue.trim()) return status("提示词内容不能为空。", true); const old = promptPresets.find(item => item.name === name); const now = Date.now(); const next = { id: old?.id || "prompt-" + now, name, text: textValue, createdAt: old?.createdAt || now, updatedAt: now }; promptPresets = promptPresets.filter(item => item.name !== name).concat(next); await chrome.storage.local.set({ promptPresetsV1: promptPresets }); renderPromptPresets(); $("prompt-preset-select").value = next.id; status("提示词“" + name + "”已保存到本地。"); }
+  function loadPromptPreset() { const id = $("prompt-preset-select")?.value, item = promptPresets.find(entry => entry.id === id); if (!item) return status("请先选择已保存的提示词。", true); $("prompt").value = item.text; chrome.storage.local.set({ prompt: item.text }).catch(() => {}); queueWorkspaceSave(); updateButton(); status("已载入提示词“" + item.name + "”。"); }
+  async function deletePromptPreset() { const id = $("prompt-preset-select")?.value, item = promptPresets.find(entry => entry.id === id); if (!item) return status("请先选择要删除的提示词。", true); promptPresets = promptPresets.filter(entry => entry.id !== id); await chrome.storage.local.set({ promptPresetsV1: promptPresets }); renderPromptPresets(); status("已删除提示词“" + item.name + "”。"); }
   function sanitizeRecord(record) {
     if (!record || typeof record !== "object") return record;
     const next = { ...record };
@@ -82,6 +87,7 @@
     auto: "必填：Base URL、API Key、模型名称。插件会根据地址或模型名自动识别常见协议。",
     agnes: "示例：Base URL 填 https://apihub.agnes-ai.com，模型填 agnes-image-2.5-flash。其余参数自动处理。",
     hfsy: "示例：Base URL 填 https://www.hfsyapi.cn，模型填 gpt-image-2 或 gpt-image-2.5。其余参数自动处理。",
+    "hfsy-task-catalog": "内置任务目录模型使用 /v1/image/create 和 POST /v1/image/query/{task_id}，选择模型后会自动填写这些字段。",
     openai: "通用 OpenAI 图像协议会自动处理 /images/generations、图片字段和 data[0].url。",
     advanced: "仅当接口文档与常见协议不同，才填写下方高级路径、请求方式和返回字段。"
   };
@@ -703,6 +709,10 @@
     writeCurrentTask({ status: "INTERRUPTED", finished: Math.min(currentTask.total || 0, resultUrls.length + taskFailures().length), resultUrls: remoteImageUrls(resultUrls), failures: taskFailures(), error: "侧边栏已关闭，未完成任务不会自动重复提交。" });
   });
   setTimeout(() => importLocalHistory().then(() => renderHistory()), 1200);
+  $("save-prompt-preset")?.addEventListener("click", savePromptPreset);
+  $("load-prompt-preset")?.addEventListener("click", loadPromptPreset);
+  $("delete-prompt-preset")?.addEventListener("click", deletePromptPreset);
+  readPromptPresets();
   const rawGenerate = generate;
   generate = async function() { if (!(await ensureLicensed())) return; return rawGenerate.apply(this, arguments); };
   const rawSaveBatch = saveBatch;
