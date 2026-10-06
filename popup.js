@@ -78,7 +78,7 @@
   const storageCleanupReady = cleanupLegacyInlineImageData().catch(error => { console.warn("无法清理旧图片缓存", error); return false; });
   function providerModelOptions(provider) { if (provider === "agnes") return [["agnes-image-2.5-flash", "Agnes Image 2.5 Flash"], ["agnes-image-2.1-flash", "Agnes Image 2.1 Flash"], ["agnes-image-2.0-flash", "Agnes Image 2.0 Flash"]]; if (provider === "hfsy") return [["gpt-image-2", "GPT-image-2"], ["gpt-image-2.5", "GPT-image-2.5"]]; return []; }
   function installProviderModelControl(provider, value) { const settings = document.querySelector(".settings"); if (!settings) return; let label = $("provider-model-control"); if (!label) { label = document.createElement("label"); label.id = "provider-model-control"; label.textContent = "模型 "; const select = document.createElement("select"); select.id = "provider-model"; label.appendChild(select); const key = $("api-key"); key?.parentElement?.insertAdjacentElement("afterend", label); select.onchange = async () => { setProviderSaveStatus("模型已更改，正在保存…"); await saveProviderConfig(false, activeProvider); setProviderSaveStatus("模型已保存：" + select.value); updateButton(); }; } const select = $("provider-model"), options = providerModelOptions(provider); const visible = options.length > 0; label.hidden = !visible; label.style.display = visible ? "" : "none"; if (!select || !visible) { updateCustomProviderUi(); return; } select.innerHTML = options.map(([id, text]) => '<option value="' + id + '">' + text + '</option>').join(""); const valid = options.some(([id]) => id === value); select.value = valid ? value : options[0][0]; updateCustomProviderUi(); }
-  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next)]); $("api-key").value = state[providerKeyName(next)] || ""; installProviderModelControl(next, state[providerModelName(next)]); $("custom-provider-panel").open = next === "custom"; updateCustomProviderUi(); setProviderSaveStatus(maskedKey($("api-key").value)); queueWorkspaceSave(); updateButton(); }
+  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next), "customModelPreset"]); $("api-key").value = state[providerKeyName(next)] || ""; installProviderModelControl(next, state[providerModelName(next)]); if (next === "custom") installCatalogModelControl(state.customModelPreset || ""); else setCatalogSizeOptions(null); $("custom-provider-panel").open = next === "custom"; updateCustomProviderUi(); setProviderSaveStatus(maskedKey($("api-key").value)); queueWorkspaceSave(); updateButton(); }
   const providerAwareFetch = window.fetch;
   window.fetch = (input, init = {}) => { const url = String(input || ""); if (init.body && (activeProvider === "agnes" && /apihub\.agnes-ai\.com/.test(url) || activeProvider === "hfsy" && /hfsyapi\.cn/.test(url))) { try { const body = JSON.parse(init.body); body.model = selectedProviderModel(activeProvider); return providerAwareFetch(input, { ...init, body: JSON.stringify(body) }); } catch {} } return providerAwareFetch(input, init); };
   function saveMode() { return $("save-mode")?.value === "downloads" ? "downloads" : "local"; }
@@ -363,6 +363,8 @@
   }
   function customValue(id, fallback = "") { return $(id)?.value.trim() || fallback; }
   function catalogEntry(model) { return (Array.isArray(window.MODEL_CATALOG) ? window.MODEL_CATALOG : []).find(item => item.id === model) || null; }
+  const defaultSizeOptions = [["1024x1024", "1:1 · 1024×1024"], ["1280x720", "16:9 · 1280×720"], ["1024x768", "4:3 · 1024×768"], ["768x1024", "3:4 · 768×1024"]];
+  function setCatalogSizeOptions(item) { const size = $("size"); if (!size) return; const current = size.value; if (item) { size.innerHTML = item.sizes.map(value => '<option value="' + value + '">' + value + '</option>').join(""); size.value = item.sizes.includes(current) ? current : item.sizes[0]; } else { size.innerHTML = defaultSizeOptions.map(([value, label]) => '<option value="' + value + '">' + label + '</option>').join(""); size.value = defaultSizeOptions.some(([value]) => value === current) ? current : defaultSizeOptions[0][0]; } }
   function installCatalogModelControl(value) {
     const select = $("custom-model-preset"); if (!select) return;
     const catalog = Array.isArray(window.MODEL_CATALOG) ? window.MODEL_CATALOG : [];
@@ -370,7 +372,8 @@
     select.value = catalog.some(item => item.id === value) ? value : "";
     const update = () => {
       const item = catalogEntry(select.value), hint = $("custom-model-hint"), model = $("custom-model");
-      if (!item) { if (hint) hint.hidden = true; return; }
+      if (!item) { setCatalogSizeOptions(null); if (hint) hint.hidden = true; return; }
+      setCatalogSizeOptions(item);
       if (model) model.value = item.model;
       $("custom-protocol").value = item.protocol; $("custom-base-url").value = item.base;
       $("custom-generate-path").value = item.generatePath; $("custom-query-path").value = item.queryPath;
