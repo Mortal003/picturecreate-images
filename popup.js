@@ -712,6 +712,7 @@
   $("save-prompt-preset")?.addEventListener("click", savePromptPreset);
   $("load-prompt-preset")?.addEventListener("click", loadPromptPreset);
   $("delete-prompt-preset")?.addEventListener("click", deletePromptPreset);
+  $("prompt-preset-select")?.addEventListener("change", loadPromptPreset);
   readPromptPresets();
   const rawGenerate = generate;
   generate = async function() { if (!(await ensureLicensed())) return; return rawGenerate.apply(this, arguments); };
