@@ -403,7 +403,7 @@
   }
   function resolvedCustomConfig(rawConfig) {
     const cfg = { ...rawConfig, protocol: resolveCustomProtocol(rawConfig), catalog: rawConfig.catalog || catalogEntry(rawConfig.model) };
-    if (cfg.catalog) return { ...cfg, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: cfg.catalog.queryMethod || "POST", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
+    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: cfg.catalog.queryMethod || "POST", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
     if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
     if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url,data[0].url,data[0].b64_json,data[0].b64_data", successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
     if (cfg.protocol === "openai") return { ...cfg, generatePath: "/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
@@ -434,7 +434,8 @@
   async function customRequest(url, options, stage) { let response; try { response = await fetch(url, options); } catch (error) { throw Error(stage + "网络请求失败：" + (error?.message || "Failed to fetch") + "。请检查 Base URL、扩展站点权限和中转站可访问性。"); } const raw = await response.text(); let data; try { data = raw ? JSON.parse(raw) : {}; } catch { throw Error(stage + "返回不是 JSON（HTTP " + response.status + "）：" + raw.slice(0, 160)); } if (!response.ok) throw Error(customErrorMessage(data, stage + "失败（HTTP " + response.status + "）")); return data; }
   async function generateCustom(rawConfig, refs, key) {
     const cfg = resolvedCustomConfig({ ...customConfig(), ...rawConfig });
-    if (!cfg.base) throw Error("请先展开并填写自定义中转站 Base URL。");
+    if (!cfg.base) throw Error("请先填写自定义中转站 Base URL，或重新选择一个内置模型预设。");
+    try { const probe = new URL(joinCustomUrl(cfg.base, cfg.generatePath)); if (!/^https?:$/i.test(probe.protocol)) throw Error("Base URL 必须以 http:// 或 https:// 开头"); } catch (error) { throw Error("自定义中转站 Base URL 无效：" + (error.message || error)); }
     const headers = { Authorization: "Bearer " + key, "Content-Type": "application/json" };
     const urls = [], failures = [];
     const recordFailure = (index, stage, error) => { const message = "第 " + (index + 1) + " 张" + stage + "失败：" + (error?.message || error); failures.push(message); log(message, "error"); };
