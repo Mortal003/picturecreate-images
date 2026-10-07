@@ -104,8 +104,44 @@
     hfsy: "示例：Base URL 填 https://www.hfsyapi.cn，模型填 gpt-image-2 或 gpt-image-2.5。其余参数自动处理。",
     "hfsy-task-catalog": "内置任务目录模型使用 /v1/image/create 和 POST /v1/image/query/{task_id}，选择模型后会自动填写这些字段。",
     openai: "通用 OpenAI 图像协议会自动处理 /images/generations、图片字段和 data[0].url。",
-    advanced: "高级字段覆盖自动协议默认值。仅在接口文档与常见协议不同时修改。"
-  };
+     advanced: "高级字段覆盖自动协议默认值。仅在接口文档与常见协议不同时修改。"
+   };
+  function customAiTemplate() {
+    return [
+      "我需要配置一个浏览器插件的自定义图像中转站，请根据下面的接口文档和脱敏 JSON 示例，告诉我每个字段应该怎么填写。",
+      "",
+      "安全要求：不要输出或要求真实 API Key；只使用 <API_KEY_REDACTED>。",
+      "",
+      "接口根地址：<BASE_URL>",
+      "模型名称：<MODEL_NAME>",
+      "接口文档：",
+      "<粘贴文档，删除真实密钥>",
+      "",
+      "请求示例：",
+      "<粘贴 curl 或请求 JSON，删除真实密钥>",
+      "",
+      "返回示例：",
+      "<粘贴完整 JSON，删除 URL 中的敏感参数>",
+      "",
+      "请严格按以下格式输出，不要猜测：",
+      "协议：auto / agnes / hfsy / openai / advanced",
+      "Base URL：",
+      "模型名称：",
+      "生成接口路径：",
+      "查询接口路径：如果不是异步，写‘不需要’",
+      "请求模式：同步返回 / 异步任务",
+      "图片输入字段：openai / reference / image / both",
+      "任务 ID 字段路径：",
+      "状态字段路径：",
+      "图片结果字段路径：",
+      "成功状态：",
+      "失败状态：",
+      "查询请求方法：auto / get / post",
+      "API Key 认证方式：bearer / x-api-key / api-key / custom-header",
+      "自定义 Header 名称（如适用）：",
+      "仍然缺失的信息："
+    ].join("\n");
+  }
   function updateCustomProviderUi() {
     const provider = $("provider")?.value;
     const isCustom = provider === "custom";
@@ -124,6 +160,8 @@
     if (modelControl && isCustom) { modelControl.hidden = true; modelControl.style.display = "none"; }
     const summary = $("custom-config-summary");
     if (summary && isCustom) { const cfg = customConfig(); summary.textContent = "当前协议：" + (cfg.protocol === "auto" ? "自动识别" : cfg.protocol) + " · 查询：" + (cfg.queryMethod === "auto" ? "自动 GET / POST 回退" : cfg.queryMethod.toUpperCase()) + " · 认证：" + (cfg.authMode === "bearer" ? "Bearer" : cfg.authMode); }
+    const template = $("custom-ai-template");
+    if (template && !template.value) template.value = customAiTemplate();
   }
   function updateSaveModeUi() { const mode = saveMode(); const button = $("choose-folder"), label = $("folder-status"); if (button) button.disabled = mode !== "local"; if (label && mode === "downloads") label.textContent = "当前使用浏览器下载目录：商品生图/"; else if (label && mode === "local" && !directoryHandle) label.textContent = "尚未选择本地文件夹，请先选择"; }
   function installSaveModeControl(value) { const host = document.querySelector(".save-location"); if (!host || $("save-mode")) return; const label = document.createElement("label"); label.className = "save-mode-label"; label.textContent = "保存方式 "; const select = document.createElement("select"); select.id = "save-mode"; select.innerHTML = '<option value="local">指定本地文件夹</option><option value="downloads">浏览器下载目录</option>'; select.value = value === "downloads" ? "downloads" : "local"; label.appendChild(select); host.insertBefore(label, host.firstChild); select.onchange = () => { updateSaveModeUi(); chrome.storage.local.set({ saveMode: select.value }); status(select.value === "local" ? "已切换为指定本地文件夹模式。" : "已切换为浏览器下载模式。"); }; updateSaveModeUi(); }
