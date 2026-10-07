@@ -129,8 +129,9 @@
               >模型名称<input id="custom-model" value="gpt-image-2" /></label
             ><p id="custom-model-hint" class="custom-protocol-hint" hidden></p>
             <p id="custom-protocol-hint" class="custom-protocol-hint">
-              必填：Base URL、API Key、模型名称。协议会自动补齐常见接口所需参数。
+              必填：Base URL、API Key、模型名称。未知中转站默认按 OpenAI 图像协议接入。
             </p>
+            <p id="custom-config-summary" class="custom-config-summary" aria-live="polite"></p>
             <details id="custom-advanced-config" class="custom-mapping-panel" hidden>
               <summary>高级接口参数</summary>
               <div class="custom-provider-fields custom-mapping-fields">
@@ -149,6 +150,25 @@
                     <option value="sync">同步返回</option>
                     <option value="async">异步任务</option>
                   </select></label>
+                <label
+                  >查询请求方法<select id="custom-query-method">
+                    <option value="auto">自动（GET，受限时 POST）</option>
+                    <option value="get">GET</option>
+                    <option value="post">POST</option>
+                  </select></label>
+                <label
+                  >API Key 认证方式<select id="custom-auth-mode">
+                    <option value="bearer">Bearer Token</option>
+                    <option value="x-api-key">x-api-key</option>
+                    <option value="api-key">api-key</option>
+                    <option value="custom-header">自定义 Header</option>
+                  </select></label>
+                <label id="custom-auth-header-row" hidden
+                  >自定义 Header 名称<input
+                    id="custom-auth-header"
+                    placeholder="例如：X-Token"
+                    autocomplete="off"
+                /></label>
                 <label
                   >图片输入字段<select id="custom-input-mode">
                     <option value="openai">extra_body.image</option>
@@ -181,6 +201,30 @@
                     id="custom-failure-states"
                     value="FAILURE,FAILED,ERROR,CANCELLED"
                 /></label>
+              </div>
+            </details>
+            <div class="custom-test-row">
+              <button id="test-custom-config" class="folder-button" type="button">测试配置</button>
+              <span id="custom-test-result" class="custom-test-result" aria-live="polite"></span>
+            </div>
+            <details class="provider-guide">
+              <summary>高级配置填写指南（看不懂时可复制给 AI）</summary>
+              <div class="provider-guide-content">
+                <p><strong>先判断是否真的需要高级配置：</strong>如果你的中转站兼容 Agnes、hfsyapi 或 OpenAI 图像接口，只需选择对应协议，填写 Base URL、API Key 和模型名称。只有接口文档明确不同，才选择“其他接口（高级）”。</p>
+                <ol>
+                  <li><strong>Base URL：</strong>填写接口根地址，例如 <code>https://api.example.com</code> 或 <code>https://api.example.com/v1</code>，不要填写完整的生成路径、任务 ID 或查询参数。</li>
+                  <li><strong>生成接口路径：</strong>填写“提交生图任务”的路径，例如 <code>/v1/images/generations</code>。通常是 POST。</li>
+                  <li><strong>查询接口路径：</strong>只有异步接口需要填写，例如 <code>/v1/image/query/{task_id}</code>。其中 <code>{task_id}</code> 必须保留，插件会替换成实际任务 ID。</li>
+                  <li><strong>请求模式：</strong>接口提交后直接返回图片，选“同步返回”；先返回任务 ID、再查询结果，选“异步任务”。选错会导致已扣费但找不到图片。</li>
+                  <li><strong>图片输入字段：</strong>按文档填写。OpenAI 兼容接口常用 <code>extra_body.image</code>；hfsy 类接口常用 <code>reference_images</code>；文档只写 <code>image</code> 时选 <code>image</code>。</li>
+                  <li><strong>任务 ID、状态、结果字段：</strong>填写 JSON 返回体中的路径，多个候选路径用英文逗号分隔。例如 <code>data[0].url,result_url</code>。路径从返回 JSON 顶层开始计算。</li>
+                  <li><strong>成功/失败状态：</strong>填写接口原样返回的状态值，大小写不敏感，多个值用英文逗号分隔。没有状态字段的同步接口不需要修改。</li>
+                  <li><strong>查询方法：</strong>自动模式会先用 GET，接口返回 405 或 501 时只回退一次 POST，不会重复提交生图任务。</li>
+                  <li><strong>认证方式：</strong>按接口文档选择 Bearer、<code>x-api-key</code>、<code>api-key</code> 或自定义 Header；Header 值始终来自上方 API Key 输入框。</li>
+                </ol>
+                <p class="provider-guide-note">不要把 API Key 写进截图、公开文档或发给 AI。发给 AI 时只提供脱敏后的请求示例和返回 JSON。</p>
+                <button id="copy-custom-ai-template" class="mini-button" type="button">复制给 AI 的配置模板</button>
+                <textarea id="custom-ai-template" class="provider-ai-template" readonly aria-label="给 AI 的配置模板"></textarea>
               </div>
             </details>
           </div>

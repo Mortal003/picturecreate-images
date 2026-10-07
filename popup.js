@@ -20,9 +20,9 @@
   const maskedKey = value => { const key = String(value || "").trim(); return key ? "已保存（后四位 " + key.slice(-4) + "）" : "未设置 API Key"; };
   async function keyFingerprint(value) { const bytes = new TextEncoder().encode(String(value || "").trim()); const digest = await crypto.subtle.digest("SHA-256", bytes); return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("").slice(0, 24); }
   function setProviderSaveStatus(message, error = false) { const el = $("provider-save-status"); if (el) { el.textContent = message; el.classList.toggle("error", error); } }
-  function customProfileSnapshot() { const cfg = customConfig(); return { customProtocol: cfg.protocol, customBaseUrl: cfg.base, customModel: cfg.model, customModelPreset: $("custom-model-preset")?.value || "", customGeneratePath: cfg.generatePath, customQueryPath: cfg.queryPath, customMode: cfg.mode, customInputMode: cfg.inputMode, customTaskIdPaths: cfg.taskIdPaths, customStatusPaths: cfg.statusPaths, customResultPaths: cfg.resultPaths, customSuccessStates: cfg.successStates, customFailureStates: cfg.failureStates, savedAt: Date.now() }; }
+  function customProfileSnapshot() { const cfg = customConfig(); return { customProtocol: cfg.protocol, customBaseUrl: cfg.base, customModel: cfg.model, customModelPreset: $("custom-model-preset")?.value || "", customGeneratePath: cfg.generatePath, customQueryPath: cfg.queryPath, customMode: cfg.mode, customInputMode: cfg.inputMode, customTaskIdPaths: cfg.taskIdPaths, customStatusPaths: cfg.statusPaths, customResultPaths: cfg.resultPaths, customSuccessStates: cfg.successStates, customFailureStates: cfg.failureStates, customAuthMode: cfg.authMode, customAuthHeader: cfg.authHeader, customQueryMethod: cfg.queryMethod, savedAt: Date.now() }; }
   async function saveCustomProfile(key) { if (activeProvider !== "custom" || !String(key || "").trim()) return; try { const fingerprint = await keyFingerprint(key); const state = await chrome.storage.local.get(CUSTOM_PROFILE_KEY); const profiles = state[CUSTOM_PROFILE_KEY] && typeof state[CUSTOM_PROFILE_KEY] === "object" ? state[CUSTOM_PROFILE_KEY] : {}; profiles[fingerprint] = customProfileSnapshot(); const recent = Object.entries(profiles).sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0)).slice(0, 20); await chrome.storage.local.set({ [CUSTOM_PROFILE_KEY]: Object.fromEntries(recent) }); } catch (error) { log("自定义密钥配置档案保存失败：" + (error.message || error), "error"); } }
-  async function applyCustomProfileForKey(key, force = false) { if (activeProvider !== "custom") return false; const value = String(key || "").trim(); if (!value) return false; try { const fingerprint = await keyFingerprint(value); const state = await chrome.storage.local.get(CUSTOM_PROFILE_KEY); const profile = state[CUSTOM_PROFILE_KEY]?.[fingerprint]; if (!profile && !force) return false; if (profile) { $("custom-protocol").value = profile.customProtocol || "auto"; $("custom-base-url").value = profile.customBaseUrl || ""; $("custom-model").value = profile.customModel || "gpt-image-2"; $("custom-model-preset").value = profile.customModelPreset || ""; $("custom-generate-path").value = profile.customGeneratePath || "/images/generations"; $("custom-query-path").value = profile.customQueryPath || "/images/generations/{task_id}"; $("custom-mode").value = profile.customMode || "sync"; $("custom-input-mode").value = profile.customInputMode || "openai"; $("custom-task-id-path").value = profile.customTaskIdPaths || "task_id,data.task_id,id"; $("custom-status-path").value = profile.customStatusPaths || "status,data.status"; $("custom-result-path").value = profile.customResultPaths || "data[0].url,result_url,data.result_url,data[0].b64_json"; $("custom-success-states").value = profile.customSuccessStates || "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"; $("custom-failure-states").value = profile.customFailureStates || "FAILURE,FAILED,ERROR,CANCELLED"; installCatalogModelControl(profile.customModelPreset || ""); updateCustomProviderUi(); return true; }
+  async function applyCustomProfileForKey(key, force = false) { if (activeProvider !== "custom") return false; const value = String(key || "").trim(); if (!value) return false; try { const fingerprint = await keyFingerprint(value); const state = await chrome.storage.local.get(CUSTOM_PROFILE_KEY); const profile = state[CUSTOM_PROFILE_KEY]?.[fingerprint]; if (!profile && !force) return false; if (profile) { $("custom-protocol").value = profile.customProtocol || "auto"; $("custom-base-url").value = profile.customBaseUrl || ""; $("custom-model").value = profile.customModel || "gpt-image-2"; $("custom-model-preset").value = profile.customModelPreset || ""; $("custom-generate-path").value = profile.customGeneratePath || "/images/generations"; $("custom-query-path").value = profile.customQueryPath || "/images/generations/{task_id}"; $("custom-mode").value = profile.customMode || "sync"; $("custom-input-mode").value = profile.customInputMode || "openai"; $("custom-task-id-path").value = profile.customTaskIdPaths || "task_id,data.task_id,id"; $("custom-status-path").value = profile.customStatusPaths || "status,data.status"; $("custom-result-path").value = profile.customResultPaths || "data[0].url,result_url,data.result_url,data[0].b64_json"; $("custom-success-states").value = profile.customSuccessStates || "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"; $("custom-failure-states").value = profile.customFailureStates || "FAILURE,FAILED,ERROR,CANCELLED"; $("custom-auth-mode").value = profile.customAuthMode || "bearer"; $("custom-auth-header").value = profile.customAuthHeader || ""; $("custom-query-method").value = profile.customQueryMethod || "auto"; installCatalogModelControl(profile.customModelPreset || ""); updateCustomProviderUi(); return true; }
       $("custom-protocol").value = "auto"; $("custom-base-url").value = ""; $("custom-model").value = "gpt-image-2"; $("custom-model-preset").value = ""; $("custom-generate-path").value = "/images/generations"; $("custom-query-path").value = "/images/generations/{task_id}"; $("custom-mode").value = "sync"; $("custom-input-mode").value = "openai"; updateCustomProviderUi(); return false;
     } catch (error) { log("自定义密钥配置档案读取失败：" + (error.message || error), "error"); return false; } }
   async function handleCustomKeyBlur() { if (activeProvider !== "custom") return saveProviderConfig(false, activeProvider); const key = $("api-key")?.value.trim() || ""; if (key && lastCustomKeyValue && key !== lastCustomKeyValue) { const restored = await applyCustomProfileForKey(key, true); setProviderSaveStatus(restored ? "已恢复该密钥上次使用的模型配置" : "检测到新密钥，旧自定义模型配置已清空，请重新选择模型"); } lastCustomKeyValue = key; await saveProviderConfig(false, activeProvider); updateButton(); }
@@ -69,8 +69,12 @@
   async function saveProviderConfig(showFeedback = true, providerOverride = null) {
     const provider = providerOverride || $("provider")?.value || activeProvider;
     const key = $("api-key")?.value.trim() || "";
+    if (provider === "custom") {
+      try { validateCustomConfig(resolvedCustomConfig(customConfig()), key); }
+      catch (error) { setProviderSaveStatus("配置无效", true); if (showFeedback) status(error.message, true); return false; }
+    }
     const payload = { provider, apiKey: key, [providerKeyName(provider)]: key, [providerModelName(provider)]: selectedProviderModel(provider) };
-    if (provider === "custom") { const custom = customConfig(); Object.assign(payload, { customProtocol: custom.protocol, customBaseUrl: custom.base, customGeneratePath: custom.generatePath, customQueryPath: custom.queryPath, customModel: custom.model, customModelPreset: $("custom-model-preset")?.value || "", customMode: custom.mode, customInputMode: custom.inputMode, customTaskIdPaths: custom.taskIdPaths, customStatusPaths: custom.statusPaths, customResultPaths: custom.resultPaths, customSuccessStates: custom.successStates, customFailureStates: custom.failureStates }); }
+    if (provider === "custom") { const custom = customConfig(); Object.assign(payload, { customProtocol: custom.protocol, customBaseUrl: custom.base, customGeneratePath: custom.generatePath, customQueryPath: custom.queryPath, customModel: custom.model, customModelPreset: $("custom-model-preset")?.value || "", customMode: custom.mode, customInputMode: custom.inputMode, customTaskIdPaths: custom.taskIdPaths, customStatusPaths: custom.statusPaths, customResultPaths: custom.resultPaths, customSuccessStates: custom.successStates, customFailureStates: custom.failureStates, customAuthMode: custom.authMode, customAuthHeader: custom.authHeader, customQueryMethod: custom.queryMethod }); }
     try {
       await cleanupLegacyInlineImageData();
       await chrome.storage.local.set(payload);
@@ -95,12 +99,12 @@
   function saveMode() { return $("save-mode")?.value === "downloads" ? "downloads" : "local"; }
   function selectedProviderModel(provider) { if (provider === "custom") return $("custom-model")?.value.trim() || "gpt-image-2"; const value = $("provider-model")?.value; return value || (provider === "agnes" ? "agnes-image-2.5-flash" : "gpt-image-2"); }
   const customProtocolHints = {
-    auto: "必填：Base URL、API Key、模型名称。插件会根据地址或模型名自动识别常见协议。",
+    auto: "必填：Base URL、API Key、模型名称。识别 Agnes / hfsyapi 域名；其他地址按 OpenAI 图像协议处理。",
     agnes: "示例：Base URL 填 https://apihub.agnes-ai.com，模型填 agnes-image-2.5-flash。其余参数自动处理。",
     hfsy: "示例：Base URL 填 https://www.hfsyapi.cn，模型填 gpt-image-2 或 gpt-image-2.5。其余参数自动处理。",
     "hfsy-task-catalog": "内置任务目录模型使用 /v1/image/create 和 POST /v1/image/query/{task_id}，选择模型后会自动填写这些字段。",
     openai: "通用 OpenAI 图像协议会自动处理 /images/generations、图片字段和 data[0].url。",
-    advanced: "仅当接口文档与常见协议不同，才填写下方高级路径、请求方式和返回字段。"
+    advanced: "高级字段覆盖自动协议默认值。仅在接口文档与常见协议不同时修改。"
   };
   function updateCustomProviderUi() {
     const provider = $("provider")?.value;
@@ -112,10 +116,14 @@
     const protocol = $("custom-protocol")?.value || "auto";
     const advanced = $("custom-advanced-config");
     if (advanced) advanced.hidden = !isCustom || protocol !== "advanced";
+    const authHeaderRow = $("custom-auth-header-row");
+    if (authHeaderRow) authHeaderRow.hidden = !isCustom || protocol !== "advanced" || ($("custom-auth-mode")?.value || "bearer") !== "custom-header";
     const hint = $("custom-protocol-hint");
     if (hint) hint.textContent = customProtocolHints[protocol] || customProtocolHints.auto;
     const modelControl = $("provider-model-control");
     if (modelControl && isCustom) { modelControl.hidden = true; modelControl.style.display = "none"; }
+    const summary = $("custom-config-summary");
+    if (summary && isCustom) { const cfg = customConfig(); summary.textContent = "当前协议：" + (cfg.protocol === "auto" ? "自动识别" : cfg.protocol) + " · 查询：" + (cfg.queryMethod === "auto" ? "自动 GET / POST 回退" : cfg.queryMethod.toUpperCase()) + " · 认证：" + (cfg.authMode === "bearer" ? "Bearer" : cfg.authMode); }
   }
   function updateSaveModeUi() { const mode = saveMode(); const button = $("choose-folder"), label = $("folder-status"); if (button) button.disabled = mode !== "local"; if (label && mode === "downloads") label.textContent = "当前使用浏览器下载目录：商品生图/"; else if (label && mode === "local" && !directoryHandle) label.textContent = "尚未选择本地文件夹，请先选择"; }
   function installSaveModeControl(value) { const host = document.querySelector(".save-location"); if (!host || $("save-mode")) return; const label = document.createElement("label"); label.className = "save-mode-label"; label.textContent = "保存方式 "; const select = document.createElement("select"); select.id = "save-mode"; select.innerHTML = '<option value="local">指定本地文件夹</option><option value="downloads">浏览器下载目录</option>'; select.value = value === "downloads" ? "downloads" : "local"; label.appendChild(select); host.insertBefore(label, host.firstChild); select.onchange = () => { updateSaveModeUi(); chrome.storage.local.set({ saveMode: select.value }); status(select.value === "local" ? "已切换为指定本地文件夹模式。" : "已切换为浏览器下载模式。"); }; updateSaveModeUi(); }
@@ -397,12 +405,14 @@
     select.onchange = async () => { update(); setProviderSaveStatus("内置模型配置已载入，请点击保存"); queueWorkspaceSave(); };
     update();
   }
-  function customConfig() { return { protocol: $("custom-protocol")?.value || "auto", base: customValue("custom-base-url").replace(/\/$/, ""), generatePath: customValue("custom-generate-path", "/images/generations"), queryPath: customValue("custom-query-path", "/images/generations/{task_id}"), model: customValue("custom-model", "gpt-image-2"), mode: $("custom-mode")?.value || "sync", inputMode: $("custom-input-mode")?.value || "openai", taskIdPaths: customValue("custom-task-id-path", "task_id,data.task_id,id"), statusPaths: customValue("custom-status-path", "status,data.status"), resultPaths: customValue("custom-result-path", "data[0].url,result_url,data.result_url,data[0].b64_json"), successStates: customValue("custom-success-states", "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"), failureStates: customValue("custom-failure-states", "FAILURE,FAILED,ERROR,CANCELLED"), catalog: catalogEntry($("custom-model-preset")?.value) }; }
+  const CUSTOM_RESULT_PATHS = "data[0].url,data[0].b64_json,data[0].b64_data,result_url,data.result_url,output.url,output[0].url,images[0].url";
+  function customConfig() { return { protocol: $("custom-protocol")?.value || "auto", base: customValue("custom-base-url").replace(/\/$/, ""), generatePath: customValue("custom-generate-path", "/images/generations"), queryPath: customValue("custom-query-path", "/images/generations/{task_id}"), model: customValue("custom-model", "gpt-image-2"), mode: $("custom-mode")?.value || "sync", inputMode: $("custom-input-mode")?.value || "openai", taskIdPaths: customValue("custom-task-id-path", "task_id,data.task_id,id"), statusPaths: customValue("custom-status-path", "status,data.status"), resultPaths: customValue("custom-result-path", CUSTOM_RESULT_PATHS), successStates: customValue("custom-success-states", "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"), failureStates: customValue("custom-failure-states", "FAILURE,FAILED,ERROR,CANCELLED"), authMode: $("custom-auth-mode")?.value || "bearer", authHeader: customValue("custom-auth-header"), queryMethod: $("custom-query-method")?.value || "auto", catalog: catalogEntry($("custom-model-preset")?.value) }; }
   function resolveCustomProtocol(cfg) {
     if (cfg.protocol && cfg.protocol !== "auto") return cfg.protocol;
-    const base = String(cfg.base || "").toLowerCase(), model = String(cfg.model || "").toLowerCase();
-    if (base.includes("agnes-ai.com") || model.startsWith("agnes-image-")) return "agnes";
-    if (base.includes("hfsyapi.cn") || model.startsWith("gpt-image-")) return "hfsy";
+    let hostname = "";
+    try { hostname = new URL(cfg.base).hostname.toLowerCase(); } catch {}
+    if (hostname === "agnes-ai.com" || hostname.endsWith(".agnes-ai.com")) return "agnes";
+    if (hostname === "hfsyapi.cn" || hostname.endsWith(".hfsyapi.cn")) return "hfsy";
     return "openai";
   }
   function joinCustomUrl(base, path) {
@@ -415,11 +425,11 @@
   function resolvedCustomConfig(rawConfig) {
     const cfg = { ...rawConfig, protocol: resolveCustomProtocol(rawConfig), catalog: rawConfig.catalog || catalogEntry(rawConfig.model) };
     if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: cfg.catalog.queryMethod || "GET", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
-    if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "GET", mode: "async", inputMode: "reference", taskIdPaths: "task_id,id,data.task_id", statusPaths: "status,data.status,task_status,data.task_status", resultPaths: "images[0].url,data.images[0].url,data[0].url,result_url,data.result_url,output[0].url,images[0].b64_json,data[0].b64_json", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED", catalogSize: $("size")?.value || "1K" };
-    if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
-    if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url,data[0].url,data[0].b64_json,data[0].b64_data", successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
-    if (cfg.protocol === "openai") return { ...cfg, generatePath: "/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json" };
-    return cfg;
+    if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "GET", mode: "async", inputMode: "reference", taskIdPaths: "task_id,id,data.task_id", statusPaths: "status,data.status,task_status,data.task_status", resultPaths: CUSTOM_RESULT_PATHS + ",images[0].url,data.images[0].url", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
+    if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json", authMode: "bearer", queryMethod: "auto" };
+    if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url," + CUSTOM_RESULT_PATHS, successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED", authMode: "bearer", queryMethod: "auto" };
+    if (cfg.protocol === "openai") return { ...cfg, generatePath: "/images/generations", mode: "auto", inputMode: "openai", resultPaths: CUSTOM_RESULT_PATHS, authMode: "bearer", queryMethod: "auto" };
+    return { ...cfg, resultPaths: cfg.resultPaths || CUSTOM_RESULT_PATHS, queryMethod: cfg.queryMethod || "auto", mode: cfg.mode || "sync" };
   }
   function inferStoredCustomProtocol(state) {
     if (["auto", "agnes", "hfsy", "hfsy-task-catalog", "openai", "advanced"].includes(state.customProtocol)) return state.customProtocol;
@@ -431,28 +441,37 @@
   function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value === "string") { if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; } return responseImage(data); }
   function customErrorMessage(data, fallback) { return data?.error?.message || data?.data?.error?.message || data?.fail_reason || data?.data?.fail_reason || data?.message || fallback; }
   function hfsyFailureMessage(data, status, taskId) { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); if (/do request failed/i.test(String(reason))) return "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason; return reason; }
-  function customRequestBody(cfg, ref) {
-    const prompt = $("prompt").value.trim(), size = $("size").value;
+  function customRequestBody(cfg, ref, overrides = {}) {
+    const prompt = overrides.prompt ?? $("prompt").value.trim(), size = overrides.size ?? $("size").value;
     if (cfg.protocol === "agnes") {
       const ratio = { "1024x1024": "1:1", "1280x720": "16:9", "1024x768": "4:3", "768x1024": "3:4" };
-      return { model: cfg.model, prompt, size: "1K", ratio: ratio[size] || "1:1", extra_body: { image: [ref], response_format: "url" } };
+      const body = { model: cfg.model, prompt, size: "1K", ratio: ratio[size] || "1:1" }; if (ref) body.extra_body = { image: [ref], response_format: "url" }; return body;
     }
-    if (cfg.protocol === "hfsy") return { model: cfg.model, prompt, size, reference_images: [ref], n: 1, response_format: "b64_json" };
-    if (cfg.protocol === "hfsy-task-catalog") return { model: cfg.model, prompt, size: cfg.catalogSize || "1K", reference_images: [ref] };
+    if (cfg.protocol === "hfsy") { const body = { model: cfg.model, prompt, size, n: 1, response_format: "b64_json" }; if (ref) body.reference_images = [ref]; return body; }
+    if (cfg.protocol === "hfsy-task-catalog") { const body = { model: cfg.model, prompt, size: cfg.catalogSize || "1K" }; if (ref) body.reference_images = [ref]; return body; }
     const body = { model: cfg.model, prompt, size };
-    if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; }
+    if (ref) { if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; } }
     return body;
   }
   async function customRequest(url, options, stage) { let response; try { response = await fetch(url, options); } catch (error) { throw Error(stage + "网络请求失败：" + (error?.message || "Failed to fetch") + "。请检查 Base URL、扩展站点权限和中转站可访问性。"); } const raw = await response.text(); let data; try { data = raw ? JSON.parse(raw) : {}; } catch { throw Error(stage + "返回不是 JSON（HTTP " + response.status + "）：" + raw.slice(0, 160)); } if (!response.ok) throw Error(customErrorMessage(data, stage + "失败（HTTP " + response.status + "）")); return data; }
+  function customAuthHeaders(cfg, key) { const headers = { "Content-Type": "application/json" }; if (cfg.authMode === "x-api-key") headers["x-api-key"] = key; else if (cfg.authMode === "api-key") headers["api-key"] = key; else if (cfg.authMode === "custom-header" && cfg.authHeader) headers[cfg.authHeader] = key; else headers.Authorization = "Bearer " + key; return headers; }
+  function validateCustomConfig(cfg, key) { if (!cfg.base) throw Error("Base URL 不能为空。"); let url; try { url = new URL(cfg.base); } catch { throw Error("Base URL 必须是有效的 http:// 或 https:// 地址。"); } if (!["http:", "https:"].includes(url.protocol)) throw Error("Base URL 只支持 http:// 或 https://。"); if (url.username || url.password || url.search || url.hash) throw Error("Base URL 不能包含账号、API Key、查询参数或片段。"); if (!key) throw Error("API Key 不能为空。"); if (!cfg.model) throw Error("模型名称不能为空。"); if (cfg.protocol === "advanced") { if (cfg.mode === "async" && !String(cfg.queryPath).includes("{task_id}")) throw Error("异步查询路径必须包含 {task_id}。"); if (!cfg.resultPaths || !cfg.taskIdPaths || !cfg.statusPaths) throw Error("高级配置的返回字段不能为空。"); const success = new Set(String(cfg.successStates).split(",").map(x => x.trim().toUpperCase()).filter(Boolean)); if (String(cfg.failureStates).split(",").map(x => x.trim().toUpperCase()).some(x => success.has(x))) throw Error("成功状态和失败状态不能重复。"); if (cfg.authMode === "custom-header" && !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(cfg.authHeader || "")) throw Error("自定义 Header 名称无效。"); } return url; }
+  async function testCustomConfig() {
+    const result = $("custom-test-result"), button = $("test-custom-config"), key = $("api-key")?.value.trim() || "";
+    try { validateCustomConfig(resolvedCustomConfig(customConfig()), key); } catch (error) { if (result) { result.textContent = error.message; result.className = "custom-test-result error"; } return; }
+    if (!confirm("测试配置会真实调用中转站，可能产生费用。是否继续？")) return;
+    if (button) button.disabled = true; if (result) { result.textContent = "正在测试…"; result.className = "custom-test-result"; }
+    try { const cfg = resolvedCustomConfig(customConfig()); const tested = await generateCustom(cfg, selectedRefs().slice(0, 1), key, { test: true, prompt: "Create a simple blue geometric icon on a clean white background.", size: "1024x1024" }); if (result) { result.textContent = tested.urls?.length ? "测试成功 · " + cfg.protocol + " · " + cfg.model : "测试未通过 · " + (tested.failures?.[0] || "没有返回图片"); result.className = "custom-test-result" + (tested.urls?.length ? " success" : " error"); } } catch (error) { if (result) { result.textContent = "测试失败 · " + (error?.message || error); result.className = "custom-test-result error"; } } finally { if (button) button.disabled = false; }
+  }
   async function customQueryRequest(cfg, url, headers, taskId) {
     if (!/^https?:\/\//i.test(url)) throw Error("查询地址不是完整 URL：" + url);
-    const preferred = cfg.queryMethod || "GET";
+    const preferred = String(cfg.queryMethod || "auto").toLowerCase() === "post" ? "POST" : "GET";
     const request = method => customRequest(url, { method, headers }, "任务 " + taskId + " 查询（" + method + "）");
     try { return await request(preferred); }
     catch (error) {
       const message = String(error?.message || error);
-      const incompatible = /Invalid URL\s*\(\s*(GET|POST)|method not allowed|HTTP\s*405|不支持.*方法/i.test(message);
-      if (cfg.protocol === "hfsy-task-catalog" && incompatible) {
+      const incompatible = /Invalid URL\s*\(\s*(GET|POST)|method not allowed|HTTP\s*(405|501)|不支持.*方法/i.test(message);
+      if (String(cfg.queryMethod || "auto").toLowerCase() === "auto" && incompatible) {
         const fallback = preferred.toUpperCase() === "GET" ? "POST" : "GET";
         log("任务 " + taskId + " 查询接口拒绝 " + preferred.toUpperCase() + "，兼容尝试 " + fallback + "。", "info");
         return await request(fallback);
@@ -460,22 +479,23 @@
       throw error;
     }
   }
-  async function generateCustom(rawConfig, refs, key) {
+  async function generateCustom(rawConfig, refs, key, options = {}) {
     const cfg = resolvedCustomConfig({ ...customConfig(), ...rawConfig });
     if (!cfg.base) throw Error("请先填写自定义中转站 Base URL，或重新选择一个内置模型预设。");
     try { const probe = new URL(joinCustomUrl(cfg.base, cfg.generatePath)); if (!/^https?:$/i.test(probe.protocol)) throw Error("Base URL 必须以 http:// 或 https:// 开头"); } catch (error) { throw Error("自定义中转站 Base URL 无效：" + (error.message || error)); }
-    const headers = { Authorization: "Bearer " + key, "Content-Type": "application/json" };
+    const headers = customAuthHeaders(cfg, key);
     const urls = [], failures = [];
+    const inputRefs = refs.length ? refs : (options.test ? [""] : []);
     const recordFailure = (index, stage, error) => { const message = "第 " + (index + 1) + " 张" + stage + "失败：" + (error?.message || error); failures.push(message); log(message, "error"); };
     if (cfg.mode === "sync") {
-      for (let index = 0; index < refs.length; index++) {
-        try { log("自定义中转站：正在请求第 " + (index + 1) + " / " + refs.length + " 张同步结果。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, refs[index])) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
+      for (let index = 0; index < inputRefs.length; index++) {
+        try { log("自定义中转站：正在请求第 " + (index + 1) + " / " + inputRefs.length + " 张同步结果。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
         catch (error) { recordFailure(index, "同步生成", error); }
       }
     } else {
       const tasks = [];
-      for (let index = 0; index < refs.length; index++) {
-        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + refs.length + " 张异步任务。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, refs[index])) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); if (!task.value) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(task.value), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + task.value); }
+      for (let index = 0; index < inputRefs.length; index++) {
+        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 张异步任务。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); if (!task.value) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(task.value), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + task.value); }
         catch (error) { recordFailure(index, "异步提交", error); }
       }
       const successStates = new Set(cfg.successStates.split(",").map(value => value.trim().toUpperCase()).filter(Boolean));
@@ -483,13 +503,14 @@
       for (const task of tasks) {
         const startedAt = Date.now(); let complete = false;
         while (!complete && Date.now() - startedAt < 600000) {
-          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
+          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
           catch (error) { recordFailure(task.index, "异步查询", error); complete = true; break; }
           await sleep(2500);
         }
         if (!complete) recordFailure(task.index, "异步查询", "等待超过 10 分钟，已停止查询。");
       }
     }
+    if (options.test) return { urls, failures, protocol: cfg.protocol, model: cfg.model };
     generateCustom.lastFailures = failures;
     if (!urls.length && failures.length) throw Error("自定义中转站没有成功图片，请查看执行日志。");
     if (failures.length) log("自定义中转站本批完成：成功 " + urls.length + " 张，失败 " + failures.length + " 张。", "error");
@@ -784,5 +805,9 @@
     setProviderSaveStatus(maskedKey($("api-key").value));
     updateButton();
   }, 0);
+  $("test-custom-config")?.addEventListener("click", testCustomConfig);
+  $("copy-custom-ai-template")?.addEventListener("click", () => { const target = $("custom-ai-template"); if (!target) return; try { navigator.clipboard.writeText(target.value); status("已复制 AI 配置模板。"); } catch { target.focus(); target.select(); status("模板已选中，请按 Ctrl+C 复制。", true); } });
+  ["custom-query-method", "custom-auth-mode", "custom-auth-header"].forEach(id => $(id)?.addEventListener("change", updateCustomProviderUi));
+  chrome.storage.local.get(["customAuthMode", "customAuthHeader", "customQueryMethod"], state => { if ($("custom-auth-mode") && state.customAuthMode) $("custom-auth-mode").value = state.customAuthMode; if ($("custom-auth-header") && state.customAuthHeader) $("custom-auth-header").value = state.customAuthHeader; if ($("custom-query-method") && state.customQueryMethod) $("custom-query-method").value = state.customQueryMethod; updateCustomProviderUi(); });
   $("api-key")?.addEventListener("blur", handleCustomKeyBlur);
 })();
