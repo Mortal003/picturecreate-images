@@ -4,7 +4,7 @@
   licenseLoader.src = 'license.js';
   document.head.appendChild(licenseLoader);
   const $ = id => document.getElementById(id);
-  let images = [], customImages = [], selected = new Set(), resultUrls = [], history = [], promptPresets = [];
+  let images = [], customImages = [], selected = new Set(), resultUrls = [], history = [], promptPresets = [], customModelPresets = [];
   let batchTasks = [], pollTimer = null, thinkingTimer = null, directoryHandle = null;
   let activeProvider = "agnes";
   let providerUiHydrated = false;
@@ -31,6 +31,106 @@
   async function savePromptPreset() { const name = $("prompt-preset-name")?.value.trim() || "", textValue = $("prompt")?.value || ""; if (!name) return status("请先填写提示词名称。", true); if (!textValue.trim()) return status("提示词内容不能为空。", true); const old = promptPresets.find(item => item.name === name); const now = Date.now(); const next = { id: old?.id || "prompt-" + now, name, text: textValue, createdAt: old?.createdAt || now, updatedAt: now }; promptPresets = promptPresets.filter(item => item.name !== name).concat(next); await chrome.storage.local.set({ promptPresetsV1: promptPresets }); renderPromptPresets(); $("prompt-preset-select").value = next.id; status("提示词“" + name + "”已保存到本地。"); }
   function loadPromptPreset() { const id = $("prompt-preset-select")?.value, item = promptPresets.find(entry => entry.id === id); if (!item) return status("请先选择已保存的提示词。", true); $("prompt").value = item.text; chrome.storage.local.set({ prompt: item.text }).catch(() => {}); queueWorkspaceSave(); updateButton(); status("已载入提示词“" + item.name + "”。"); }
   async function deletePromptPreset() { const id = $("prompt-preset-select")?.value, item = promptPresets.find(entry => entry.id === id); if (!item) return status("请先选择要删除的提示词。", true); promptPresets = promptPresets.filter(entry => entry.id !== id); await chrome.storage.local.set({ promptPresetsV1: promptPresets }); renderPromptPresets(); status("已删除提示词“" + item.name + "”。"); }
+  async function readCustomModelPresets() {
+    try {
+      const state = await chrome.storage.local.get("customModelPresetsV1");
+      customModelPresets = Array.isArray(state.customModelPresetsV1) ? state.customModelPresetsV1.filter(item => item && item.name && typeof item === "object") : [];
+    } catch (error) {
+      customModelPresets = [];
+      log("自定义模型预设读取失败：" + (error.message || error), "error");
+    }
+    renderCustomModelPresets();
+  }
+  function renderCustomModelPresets() {
+    const select = $("custom-preset-select");
+    if (!select) return;
+    select.innerHTML = '<option value="">选择已保存模型</option>';
+    customModelPresets.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "zh-CN")).forEach(item => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.name + (item.model ? " (" + item.model + ")" : "");
+      select.appendChild(option);
+    });
+  }
+  async function saveCustomModelPreset() {
+    const name = $("custom-preset-name")?.value.trim() || "";
+    if (!name) return status("请先填写模型预设名称。", true);
+    const key = $("api-key")?.value.trim() || "";
+    const base = $("custom-base-url")?.value.trim() || "";
+    const model = $("custom-model")?.value.trim() || "";
+    if (!base && !model) return status("请先填写 Base URL 或模型名称后再保存。", true);
+    const old = customModelPresets.find(item => item.name === name);
+    const now = Date.now();
+    const next = {
+      id: old?.id || "model-preset-" + now,
+      name,
+      apiKey: key,
+      base,
+      model: model || "gpt-image-2",
+      customModelPreset: $("custom-model-preset")?.value || "",
+      protocol: $("custom-protocol")?.value || "auto",
+      mode: $("custom-mode")?.value || "sync",
+      generatePath: $("custom-generate-path")?.value || "/images/generations",
+      queryPath: $("custom-query-path")?.value || "/images/generations/{task_id}",
+      queryMethod: $("custom-query-method")?.value || "auto",
+      authMode: $("custom-auth-mode")?.value || "bearer",
+      authHeader: $("custom-auth-header")?.value || "",
+      inputMode: $("custom-input-mode")?.value || "openai",
+      taskIdPaths: $("custom-task-id-path")?.value || "task_id,data.task_id,id",
+      statusPaths: $("custom-status-path")?.value || "status,data.status",
+      resultPaths: $("custom-result-path")?.value || "data[0].url,result_url,data.result_url,data[0].b64_json",
+      successStates: $("custom-success-states")?.value || "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED",
+      failureStates: $("custom-failure-states")?.value || "FAILURE,FAILED,ERROR,CANCELLED",
+      createdAt: old?.createdAt || now,
+      updatedAt: now
+    };
+    customModelPresets = customModelPresets.filter(item => item.name !== name).concat(next);
+    await chrome.storage.local.set({ customModelPresetsV1: customModelPresets });
+    renderCustomModelPresets();
+    $("custom-preset-select").value = next.id;
+    status("模型预设“" + name + "”已保存，包含密钥与接口配置。");
+    await saveProviderConfig(false, "custom");
+  }
+  async function loadCustomModelPreset() {
+    const id = $("custom-preset-select")?.value;
+    const item = customModelPresets.find(entry => entry.id === id);
+    if (!item) return status("请先选择已保存的模型预设。", true);
+    if (item.apiKey !== undefined && $("api-key")) $("api-key").value = item.apiKey;
+    if ($("custom-base-url")) $("custom-base-url").value = item.base || "";
+    if ($("custom-model")) $("custom-model").value = item.model || "";
+    if ($("custom-model-preset")) $("custom-model-preset").value = item.customModelPreset || "";
+    if ($("custom-protocol")) $("custom-protocol").value = item.protocol || "auto";
+    if ($("custom-mode")) $("custom-mode").value = item.mode || "sync";
+    if ($("custom-generate-path")) $("custom-generate-path").value = item.generatePath || "/images/generations";
+    if ($("custom-query-path")) $("custom-query-path").value = item.queryPath || "/images/generations/{task_id}";
+    if ($("custom-query-method")) $("custom-query-method").value = item.queryMethod || "auto";
+    if ($("custom-auth-mode")) $("custom-auth-mode").value = item.authMode || "bearer";
+    if ($("custom-auth-header")) $("custom-auth-header").value = item.authHeader || "";
+    if ($("custom-input-mode")) $("custom-input-mode").value = item.inputMode || "openai";
+    if ($("custom-task-id-path")) $("custom-task-id-path").value = item.taskIdPaths || "task_id,data.task_id,id";
+    if ($("custom-status-path")) $("custom-status-path").value = item.statusPaths || "status,data.status";
+    if ($("custom-result-path")) $("custom-result-path").value = item.resultPaths || "data[0].url,result_url,data.result_url,data[0].b64_json";
+    if ($("custom-success-states")) $("custom-success-states").value = item.successStates || "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED";
+    if ($("custom-failure-states")) $("custom-failure-states").value = item.failureStates || "FAILURE,FAILED,ERROR,CANCELLED";
+    if ($("custom-preset-name")) $("custom-preset-name").value = item.name;
+    installCatalogModelControl(item.customModelPreset || "");
+    updateCustomProviderUi();
+    lastCustomKeyValue = $("api-key")?.value.trim() || "";
+    setProviderSaveStatus(maskedKey($("api-key").value));
+    await saveProviderConfig(false, "custom");
+    updateButton();
+    status("已载入模型预设“" + item.name + "”。");
+  }
+  async function deleteCustomModelPreset() {
+    const id = $("custom-preset-select")?.value;
+    const item = customModelPresets.find(entry => entry.id === id);
+    if (!item) return status("请先选择要删除的模型预设。", true);
+    customModelPresets = customModelPresets.filter(entry => entry.id !== id);
+    await chrome.storage.local.set({ customModelPresetsV1: customModelPresets });
+    renderCustomModelPresets();
+    if ($("custom-preset-name") && $("custom-preset-name").value === item.name) $("custom-preset-name").value = "";
+    status("已删除模型预设“" + item.name + "”。");
+  }
   function sanitizeRecord(record) {
     if (!record || typeof record !== "object") return record;
     const next = { ...record };
@@ -805,6 +905,11 @@
   $("delete-prompt-preset")?.addEventListener("click", deletePromptPreset);
   $("prompt-preset-select")?.addEventListener("change", loadPromptPreset);
   readPromptPresets();
+  $("save-custom-preset")?.addEventListener("click", saveCustomModelPreset);
+  $("load-custom-preset")?.addEventListener("click", loadCustomModelPreset);
+  $("delete-custom-preset")?.addEventListener("click", deleteCustomModelPreset);
+  $("custom-preset-select")?.addEventListener("change", loadCustomModelPreset);
+  readCustomModelPresets();
   const rawGenerate = generate;
   generate = async function() { if (!(await ensureLicensed())) return; return rawGenerate.apply(this, arguments); };
   const rawSaveBatch = saveBatch;

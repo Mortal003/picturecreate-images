@@ -73,11 +73,33 @@
         </div>
         <div class="fields">
           <label
-            >比例<select id="size">
-              <option value="1024x1024">1:1 · 1024×1024</option>
-              <option value="1280x720">16:9 · 1280×720</option>
-              <option value="1024x768">4:3 · 1024×768</option>
-              <option value="768x1024">3:4 · 768×1024</option>
+            >比例与清晰度<select id="size">
+              <optgroup label="1K 标清主图">
+                <option value="1024x1024" selected>1:1 · 1024×1024 正方形</option>
+                <option value="1280x720">16:9 · 1280×720 横版</option>
+                <option value="720x1280">9:16 · 720×1280 竖版</option>
+                <option value="768x1024">3:4 · 768×1024 竖版</option>
+                <option value="1024x768">4:3 · 1024×768 横版</option>
+              </optgroup>
+              <optgroup label="2K 高清主图">
+                <option value="2048x2048">1:1 · 2048×2048 2K正方形</option>
+                <option value="2560x1440">16:9 · 2560×1440 2K横版</option>
+                <option value="1440x2560">9:16 · 1440×2560 2K竖版</option>
+                <option value="1536x2048">3:4 · 1536×2048 2K竖版</option>
+                <option value="2048x1536">4:3 · 2048×1536 2K横版</option>
+              </optgroup>
+              <optgroup label="4K 超清细节">
+                <option value="4096x4096">1:1 · 4096×4096 4K正方形</option>
+                <option value="3840x2160">16:9 · 3840×2160 4K横版</option>
+                <option value="2160x3840">9:16 · 2160×3840 4K竖版</option>
+                <option value="3072x4096">3:4 · 3072×4096 4K竖版</option>
+                <option value="4096x3072">4:3 · 4096×3072 4K横版</option>
+              </optgroup>
+              <optgroup label="纯尺寸代号">
+                <option value="1K">1K · 极简代号</option>
+                <option value="2K">2K · 极简代号</option>
+                <option value="4K">4K · 极简代号</option>
+              </optgroup>
             </select></label
           ><label
             >批量规则<input
@@ -107,6 +129,16 @@
         <details id="custom-provider-panel" class="custom-provider-panel">
           <summary>自定义中转站配置</summary>
           <div class="custom-provider-fields">
+            <div class="custom-model-presets">
+              <label>保存当前模型配置<input id="custom-preset-name" placeholder="例如：我的4K主图节点" /></label>
+              <div class="prompt-preset-actions">
+                <button id="save-custom-preset" class="folder-button" type="button">保存为预设</button>
+                <select id="custom-preset-select"><option value="">选择已保存模型</option></select>
+                <button id="load-custom-preset" class="folder-button" type="button">载入</button>
+                <button id="delete-custom-preset" class="text-button" type="button">删除</button>
+              </div>
+              <p class="hint">可将当前填写的接口地址、模型名、密钥和协议参数保存为预设，方便一键切换。</p>
+            </div>
             <label
               >接口协议<select id="custom-protocol">
                 <option value="auto">自动识别（推荐）</option>
