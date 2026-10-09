@@ -14,6 +14,7 @@ draft_*_folder/
 license-manager/bin/
 license-manager/obj/
 license-manager/*.user
+license-manager/publish/
 
 # 本机编辑器和诊断文件。
 .vs/

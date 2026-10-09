@@ -29,6 +29,38 @@ async function generateAgnes(message) {
   return urls;
 }
 
+async function runAgnesTask(message) {
+  const refs = Array.isArray(message.referenceImages) ? message.referenceImages : [];
+  const ratioMap = { "1024x1024":"1:1", "1040x832":"5:4", "720x1280":"9:16", "1280x720":"16:9", "1024x768":"4:3", "1008x672":"3:2", "832x1040":"4:5", "768x1024":"3:4", "672x1008":"2:3", "1344x576":"21:9" };
+  const startedAt = Date.now();
+  const batchTasks = refs.map((referenceImage, imageIndex) => ({ provider: "agnes", imageIndex, taskId: "agnes-" + (imageIndex + 1), status: "QUEUED", referenceImage, updatedAt: startedAt }));
+  const saveState = async (status, resultUrls = []) => {
+    const succeeded = batchTasks.filter(task => task.status === "SUCCESS").length;
+    const failed = batchTasks.filter(task => task.status === "FAILURE").length;
+    const activeTask = { batch: true, provider: "agnes", model: message.model || "agnes-image-2.5-flash", total: batchTasks.length, finished: succeeded + failed, succeeded, failed, startedAt, updatedAt: Date.now(), status, resultUrls: remoteImageUrls(resultUrls), failures: batchTasks.filter(task => task.status === "FAILURE").map(task => ({ taskId: task.taskId, imageIndex: task.imageIndex, error: task.error || "生成失败" })) };
+    await chrome.storage.local.set({ activeTask, batchTasks, lastResults: remoteImageUrls(resultUrls) });
+    return activeTask;
+  };
+  await saveState("PROCESSING", []);
+  const urls = [];
+  for (const task of batchTasks) {
+    task.status = "SUBMITTING"; task.updatedAt = Date.now(); await saveState("PROCESSING", urls);
+    const options = () => ({ method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: ratioMap[message.size] || "1:1", extra_body: { image: [task.referenceImage], response_format: "url" } }) });
+    let data = null; let lastError = null;
+    for (const wait of [0, 5000, 10000, 20000]) {
+      if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+      try { data = await parseResponse(await fetch("https://apihub.agnes-ai.com/v1/images/generations", options())); lastError = null; break; } catch (error) { lastError = error; if (!/队列满|queue\s*(is\s*)?full|too many requests|capacity|overloaded/i.test(String(error?.message || error))) break; }
+    }
+    const url = data && (data.data?.[0]?.url || (data.data?.[0]?.b64_json ? "data:image/png;base64," + data.data[0].b64_json : ""));
+    if (url) { task.status = "SUCCESS"; task.url = url; urls.push(url); }
+    else { task.status = "FAILURE"; task.error = lastError?.message || "Agnes 返回中没有图片 URL"; }
+    task.updatedAt = Date.now(); await saveState("PROCESSING", urls);
+  }
+  const finalStatus = urls.length ? "COMPLETE" : "FAILED";
+  const activeTask = await saveState(finalStatus, urls);
+  return { urls, batchTasks, activeTask };
+}
+
 async function generateHfsy(message) {
   const tasks = [];
   for (const ref of message.referenceImages || []) {
