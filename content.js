@@ -3,6 +3,7 @@
   const FLOAT_POSITION_KEY = 'floatButtonPosition';
   const FLOAT_MARGIN = 8;
   const DRAG_THRESHOLD = 5;
+  const isExtensionAlive = () => { try { return Boolean(chrome?.runtime?.id); } catch { return false; } };
   const getImages = (includePlaceholders = false) => Array.from(document.images).map((img,index) => ({ index, src: img.currentSrc || img.src, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, alt: img.alt || '', placeholder: placeholderPattern.test((img.currentSrc || img.src || '') + ' ' + (img.alt || '')) })).filter(x => x.src && x.width >= 80 && x.height >= 80 && (includePlaceholders || !x.placeholder));
   const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
   const defaultPosition = host => ({
@@ -25,9 +26,11 @@
   };
   const restorePosition = async host => {
     try {
+      if (!isExtensionAlive()) return;
       const stored = await chrome.storage.local.get(FLOAT_POSITION_KEY);
       const applied = applyPosition(host, stored?.[FLOAT_POSITION_KEY]);
       if (stored?.[FLOAT_POSITION_KEY] && (applied.left !== Number(stored[FLOAT_POSITION_KEY].left) || applied.top !== Number(stored[FLOAT_POSITION_KEY].top))) {
+        if (!isExtensionAlive()) return;
         await chrome.storage.local.set({ [FLOAT_POSITION_KEY]: applied });
       }
     } catch {
@@ -60,7 +63,7 @@
       button.classList.remove('dragging');
       if (wasMoved) {
         ignoreNextClick = true;
-        try { await chrome.storage.local.set({ [FLOAT_POSITION_KEY]: { left: parseFloat(host.style.left), top: parseFloat(host.style.top) } }); } catch {}
+        try { if (isExtensionAlive()) await chrome.storage.local.set({ [FLOAT_POSITION_KEY]: { left: parseFloat(host.style.left), top: parseFloat(host.style.top) } }); } catch {}
       } else ignoreNextClick = false;
       moved = false;
     };
@@ -99,19 +102,20 @@
       button.classList.add('loading');
       button.textContent = '正在切换…';
       try {
+        if (!isExtensionAlive()) throw new Error('插件已重新加载，请按 F5 刷新当前网页');
         const response = await Promise.race([
           chrome.runtime.sendMessage({ type: 'TOGGLE_SIDE_PANEL' }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('侧边栏操作超时，请刷新当前网页')), 2000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('侧边栏操作超时，请按 F5 刷新当前网页')), 2000))
         ]);
-        if (!response?.ok) throw new Error(response?.error || '侧边栏操作失败，请刷新当前网页');
+        if (!response?.ok) throw new Error(response?.error || '侧边栏操作失败，请按 F5 刷新当前网页');
         button.classList.remove('loading');
         button.textContent = response.open ? '已打开' : '已关闭';
         setTimeout(() => { button.textContent = original; button.title = '打开/关闭商品生图助手'; }, 1000);
       } catch (error) {
         button.classList.remove('loading');
         button.classList.add('error');
-        button.textContent = '刷新页面';
-        button.title = error.message || '插件已更新，请刷新当前网页';
+        button.textContent = '刷新网页';
+        button.title = error.message || '插件已更新，请按 F5 刷新当前网页';
         setTimeout(() => { button.classList.remove('error'); button.textContent = original; button.title = '打开/关闭商品生图助手'; }, 1800);
       } finally { setTimeout(() => { openLocked = false; }, 250); }
     };
@@ -119,12 +123,22 @@
     window.addEventListener('blur', event => { if (dragging) finishDrag(event); });
     restorePosition(host);
     window.addEventListener('resize', () => {
-      const applied = applyPosition(host, { left: parseFloat(host.style.left), top: parseFloat(host.style.top) });
-      chrome.storage.local.set({ [FLOAT_POSITION_KEY]: applied }).catch(() => {});
+      try {
+        if (!isExtensionAlive()) return;
+        const applied = applyPosition(host, { left: parseFloat(host.style.left), top: parseFloat(host.style.top) });
+        chrome.storage.local.set({ [FLOAT_POSITION_KEY]: applied }).catch(() => {});
+      } catch {}
     });
   }
   mountFloatButton();
-  const observer=new MutationObserver(()=>{if(!document.getElementById('image-workflow-float-host'))mountFloatButton();}); observer.observe(document.documentElement,{childList:true,subtree:true});
+  const observer = new MutationObserver(() => {
+    if (!isExtensionAlive()) {
+      try { observer.disconnect(); } catch {}
+      return;
+    }
+    if (!document.getElementById('image-workflow-float-host')) mountFloatButton();
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.runtime.onMessage.addListener((message,_sender,sendResponse)=>{
     if(message?.type==='MOUNT_FLOAT'){mountFloatButton();sendResponse({ok:true});return true;}
     if(message?.type==='LIST_IMAGES'){sendResponse({images:getImages(Boolean(message.includePlaceholders))});return true;}

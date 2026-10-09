@@ -6,6 +6,9 @@ const sidePanelStates = new Map();
 const remoteImageUrls = values => (Array.isArray(values) ? values : []).filter(value => typeof value === "string" && /^https?:\/\//i.test(value));
 const hfsyFailureMessage = (data, status, taskId) => { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); return /do request failed/i.test(String(reason)) ? "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason : reason; };
 
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+}
 chrome.action.onClicked.addListener(async tab => { try { await chrome.sidePanel.open({ windowId: tab.windowId }); sidePanelStates.set(tab.windowId, true); } catch (e) { console.warn("无法打开侧边栏", e); } });
 
 async function parseResponse(response) {
