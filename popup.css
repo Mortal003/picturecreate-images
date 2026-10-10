@@ -54,3 +54,10 @@ textarea,input,select{max-width:100%;min-width:0}
 .custom-config-summary{margin:4px 0 8px;font-size:11px;color:#64748b;line-height:1.4}
 .standard-provider-fields{display:grid;gap:8px;margin-top:8px}
 .standard-provider-fields label{font-size:12px;color:#526059}
+.standard-provider-fields[hidden],
+.standard-provider-fields.hidden,
+.custom-provider-panel[hidden],
+.custom-provider-panel.hidden {
+  display: none !important;
+}
+

@@ -302,8 +302,16 @@
     const isCustom = provider === "custom";
     const standardFields = $("standard-provider-fields");
     const customPanel = $("custom-provider-panel");
-    if (standardFields) standardFields.hidden = isCustom;
-    if (customPanel) customPanel.hidden = !isCustom;
+    if (standardFields) {
+      standardFields.hidden = isCustom;
+      standardFields.classList.toggle("hidden", isCustom);
+      standardFields.style.display = isCustom ? "none" : "";
+    }
+    if (customPanel) {
+      customPanel.hidden = !isCustom;
+      customPanel.classList.toggle("hidden", !isCustom);
+      customPanel.style.display = !isCustom ? "none" : "";
+    }
     const protocol = $("custom-protocol")?.value || "auto";
     const authHeaderRow = $("custom-auth-header-row");
     if (authHeaderRow) authHeaderRow.hidden = !isCustom || protocol !== "advanced" || ($("custom-auth-mode")?.value || "bearer") !== "custom-header";
@@ -731,7 +739,7 @@
       const body = { model: cfg.model, prompt, size: "1K", ratio: ratio[size] || "1:1" }; if (ref) body.extra_body = { image: [ref], response_format: "url" }; return body;
     }
     if (cfg.protocol === "hfsy") { const body = { model: cfg.model, prompt, size, n: 1, response_format: "b64_json" }; if (ref) body.reference_images = [ref]; return body; }
-    if (cfg.protocol === "hfsy-task-catalog") { const body = { model: cfg.model, prompt, size: cfg.catalogSize || "1K" }; if (ref) body.reference_images = [ref]; return body; }
+    if (cfg.protocol === "hfsy-task-catalog") { const body = { model: cfg.model, prompt, size: overrides.size || cfg.catalogSize || "1K" }; if (ref) body.reference_images = [ref]; return body; }
     const body = { model: cfg.model, prompt, size };
     if (ref) { if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; } }
     return body;
@@ -744,7 +752,22 @@
     try { validateCustomConfig(resolvedCustomConfig(customConfig()), key); } catch (error) { if (result) { result.textContent = error.message; result.className = "custom-test-result error"; } return; }
     if (!confirm("测试配置会真实调用中转站，可能产生费用。是否继续？")) return;
     if (button) button.disabled = true; if (result) { result.textContent = "正在测试…"; result.className = "custom-test-result"; }
-    try { const cfg = resolvedCustomConfig(customConfig()); const tested = await generateCustom(cfg, selectedRefs().slice(0, 1), key, { test: true, prompt: "Create a simple blue geometric icon on a clean white background.", size: "1024x1024" }); if (result) { result.textContent = tested.urls?.length ? "测试成功 · " + cfg.protocol + " · " + cfg.model : "测试未通过 · " + (tested.failures?.[0] || "没有返回图片"); result.className = "custom-test-result" + (tested.urls?.length ? " success" : " error"); } } catch (error) { if (result) { result.textContent = "测试失败 · " + (error?.message || error); result.className = "custom-test-result error"; } } finally { if (button) button.disabled = false; }
+    try {
+      const cfg = resolvedCustomConfig(customConfig());
+      const testSize = cfg.protocol === "hfsy-task-catalog" ? (cfg.catalogSize || "1K") : (cfg.protocol === "agnes" ? "1K" : "1024x1024");
+      const tested = await generateCustom(cfg, [], key, { test: true, prompt: "Create a simple blue geometric icon on a clean white background.", size: testSize });
+      if (result) {
+        result.textContent = tested.urls?.length ? "测试成功 · " + cfg.protocol + " · " + cfg.model : "测试未通过 · " + (tested.failures?.[0] || "没有返回图片");
+        result.className = "custom-test-result" + (tested.urls?.length ? " success" : " error");
+      }
+    } catch (error) {
+      if (result) {
+        result.textContent = "测试失败 · " + (error?.message || error);
+        result.className = "custom-test-result error";
+      }
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
   async function customQueryRequest(cfg, url, headers, taskId) {
     if (!/^https?:\/\//i.test(url)) throw Error("查询地址不是完整 URL：" + url);
@@ -786,7 +809,20 @@
       for (const task of tasks) {
         const startedAt = Date.now(); let complete = false;
         while (!complete && Date.now() - startedAt < 600000) {
-          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id); const state = String(customFirstValue(data, cfg.statusPaths).value || data?.status || data?.data?.status || data?.task_status || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
+          try {
+            const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id));
+            const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id);
+            const state = String(customFirstValue(data, cfg.statusPaths).value || data?.status || data?.data?.status || data?.task_status || "").toUpperCase();
+            const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS);
+            if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; }
+            if (failureStates.has(state)) {
+              const reason = customErrorMessage(data, "状态为 " + state);
+              const hint = /图片生成失败|generate failed/i.test(reason) ? "（若使用了本地参考图，请改用网页公开图片URL测试）" : "";
+              throw Error(reason + hint);
+            }
+            if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths);
+            if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。");
+          }
           catch (error) { recordFailure(task.index, "异步查询", error); complete = true; break; }
           await sleep(2500);
         }
