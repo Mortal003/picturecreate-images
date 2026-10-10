@@ -556,7 +556,24 @@
       grid.appendChild(b);
     }); updateButton();
   }
-  function updateButton() { if ($("generate")) $("generate").disabled = !selected.size || !$("prompt").value.trim() || !$("api-key").value.trim(); if ($("selection-note")) $("selection-note").textContent = "当前选择了 " + selected.size + " 张照片（本次最多 6 张）"; queueWorkspaceSave(); }
+  function updateButton() {
+    const hasKey = Boolean($("api-key")?.value.trim());
+    const hasPrompt = Boolean($("prompt")?.value.trim());
+    const count = selected.size;
+    if ($("generate")) $("generate").disabled = !hasKey || (!count && !hasPrompt);
+    if ($("selection-note")) {
+      $("selection-note").textContent = count
+        ? "当前选择了 " + count + " 张照片（本次最多 6 张）"
+        : "未选择参考图（纯文生图模式，将直接按提示词生成 1 张图片）";
+    }
+    const batchRuleInput = document.querySelector('input[readonly][value*="选几张"], input[readonly][value*="纯文生图"]');
+    if (batchRuleInput) {
+      batchRuleInput.value = count
+        ? "选几张参考图，就生成几张结果（当前 " + count + " 张）"
+        : "纯文生图模式：根据提示词生成 1 张";
+    }
+    queueWorkspaceSave();
+  }
   async function scanImages() { status("正在扫描图片…"); try { const t = await getPageTab(); if (!t) throw Error("请切换到可读取的网页标签页。"); const r = await chrome.tabs.sendMessage(t.id, { type: "LIST_IMAGES", includePlaceholders: !$("filter-placeholders").checked }); images = r?.images || []; selected.clear(); renderImages(); status(""); } catch (e) { images = []; renderImages(); status(pageConnectionMessage(e), true); } }
   function setProgress(value) { const bar=$("progress-bar"), label=$("progress-percent"); const prev=Number(bar?.dataset.progress||0); const next=Math.max(prev,Math.min(100,Number(value)||0)); if(bar){bar.dataset.progress=String(next);bar.style.width=next+"%";} if(label) label.textContent=Math.round(next)+"%"; return next; }
   function thinking(on) { const box = $("thinking"); if (!box) return; box.hidden = !on; clearInterval(thinkingTimer); if (!on) { setProgress(100); thinkingStartedAt = 0; return; } const bar=$("progress-bar"); if(bar) delete bar.dataset.progress; thinkingStartedAt = Date.now(); setProgress(5); $("thinking-text").textContent = "任务已提交，等待中转站返回…"; thinkingTimer = setInterval(() => { const elapsed = Date.now() - thinkingStartedAt; const p = Math.min(90, 5 + (elapsed / 55000) * 80); setProgress(p); const shown = Number($("progress-bar")?.dataset.progress || p); $("thinking-text").textContent = shown < 22 ? "正在读取参考图…" : shown < 48 ? "正在理解提示词…" : shown < 78 ? "中转站生成中（通常需要 35–70 秒）…" : "等待图片返回与整理结果…"; }, 1000); }
@@ -673,8 +690,8 @@
   }
   function resolvedCustomConfig(rawConfig) {
     const cfg = { ...rawConfig, protocol: resolveCustomProtocol(rawConfig), catalog: rawConfig.catalog || catalogEntry(rawConfig.model) };
-    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: cfg.catalog.queryMethod || "GET", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
-    if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "GET", mode: "async", inputMode: "reference", taskIdPaths: "task_id,id,data.task_id", statusPaths: "status,data.status,task_status,data.task_status", resultPaths: CUSTOM_RESULT_PATHS + ",images[0].url,data.images[0].url", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
+    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: "GET", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
+    if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "GET", mode: "async", inputMode: "reference", taskIdPaths: "id,task_id,data.task_id", statusPaths: "status,data.status,task_status,data.task_status", resultPaths: CUSTOM_RESULT_PATHS + ",images[0].url,data.images[0].url", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
     if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json", authMode: "bearer", queryMethod: "auto" };
     if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url," + CUSTOM_RESULT_PATHS, successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED", authMode: "bearer", queryMethod: "auto" };
     if (cfg.protocol === "openai") return { ...cfg, generatePath: "/images/generations", mode: "auto", inputMode: "openai", resultPaths: CUSTOM_RESULT_PATHS, authMode: "bearer", queryMethod: "auto" };
@@ -739,7 +756,18 @@
       const body = { model: cfg.model, prompt, size: "1K", ratio: ratio[size] || "1:1" }; if (ref) body.extra_body = { image: [ref], response_format: "url" }; return body;
     }
     if (cfg.protocol === "hfsy") { const body = { model: cfg.model, prompt, size, n: 1, response_format: "b64_json" }; if (ref) body.reference_images = [ref]; return body; }
-    if (cfg.protocol === "hfsy-task-catalog") { const body = { model: cfg.model, prompt, size: overrides.size || cfg.catalogSize || "1K" }; if (ref) body.reference_images = [ref]; return body; }
+    if (cfg.protocol === "hfsy-task-catalog") {
+      let taskSize = overrides.size || cfg.catalogSize || "1K";
+      if (cfg.catalog && Array.isArray(cfg.catalog.sizes)) {
+        if (!cfg.catalog.sizes.includes(taskSize)) {
+          taskSize = cfg.catalog.sizes[0];
+        }
+      }
+      const body = { model: cfg.model, prompt, size: taskSize };
+      if (ref && /^https?:\/\//i.test(ref)) body.reference_images = [ref];
+      if (cfg.catalog?.background) body.background = cfg.catalog.background;
+      return body;
+    }
     const body = { model: cfg.model, prompt, size };
     if (ref) { if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; } }
     return body;
@@ -791,7 +819,7 @@
     try { const probe = new URL(joinCustomUrl(cfg.base, cfg.generatePath)); if (!/^https?:$/i.test(probe.protocol)) throw Error("Base URL 必须以 http:// 或 https:// 开头"); } catch (error) { throw Error("自定义中转站 Base URL 无效：" + (error.message || error)); }
     const headers = customAuthHeaders(cfg, key);
     const urls = [], failures = [];
-    const inputRefs = refs.length ? refs : (options.test ? [""] : []);
+    const inputRefs = refs.length ? refs : [""];
     const recordFailure = (index, stage, error) => { const message = "第 " + (index + 1) + " 张" + stage + "失败：" + (error?.message || error); failures.push(message); log(message, "error"); };
     if (cfg.mode === "sync") {
       for (let index = 0; index < inputRefs.length; index++) {
@@ -836,12 +864,35 @@
     return urls;
   }
   async function generate() {
-    const rawRefs = selectedRefs(), key = $("api-key").value.trim(), provider = $("provider").value;
-    if (!rawRefs.length) return;
-    const checked = await normalizeReferenceImages(rawRefs);
-    checked.failures.forEach(item => log(item.message, "error"));
-    if (!checked.valid.length) { status("没有可提交的参考图片，请检查图片格式和大小。", true); return; }
-    const rs = checked.valid;
+    const rawRefs = selectedRefs(), key = $("api-key")?.value.trim() || "", provider = $("provider")?.value || "agnes";
+    const promptText = $("prompt")?.value.trim() || "";
+    if (!rawRefs.length && !promptText) {
+      status("请至少输入提示词或选择参考图。", true);
+      return;
+    }
+    if (!key) {
+      status("请先填写并保存当前供应商的 API Key。", true);
+      return;
+    }
+    if (provider === "custom") {
+      const cfg = resolvedCustomConfig(customConfig());
+      if (cfg.protocol === "hfsy-task-catalog" && rawRefs.length > 0) {
+        const hasLocalData = rawRefs.some(r => typeof r === "string" && (r.startsWith("data:") || r.startsWith("blob:")));
+        if (hasLocalData) {
+          status("当前任务目录模型仅支持公开网络图片URL（http/https），暂不支持本地图片Base64。请改用网页参考图或取消勾选直接文生图。", true);
+          return;
+        }
+      }
+    }
+    let rs = [];
+    if (rawRefs.length) {
+      const checked = await normalizeReferenceImages(rawRefs);
+      checked.failures.forEach(item => log(item.message, "error"));
+      if (!checked.valid.length) { status("没有可提交的参考图片，请检查图片格式和大小。", true); return; }
+      rs = checked.valid;
+    } else {
+      rs = [""];
+    }
     if (saveMode() === "local") { if (!directoryHandle) { const ok = confirm("尚未选择本地保存文件夹，是否现在选择？"); if (!ok) { status("未选择本地保存文件夹，已取消生成。", true); return; } await chooseFolder(); if (!directoryHandle) { status("必须选择本地保存文件夹后才能生成。", true); return; } } try { const perm = await directoryHandle.queryPermission({ mode: "readwrite" }); if (perm !== "granted") { const granted = await directoryHandle.requestPermission({ mode: "readwrite" }); if (granted !== "granted") { status("本地文件夹尚未授权，已取消生成。", true); return; } } } catch (e) { status("无法确认本地文件夹授权：" + e.message, true); return; } }
     $("generate").disabled = true; thinking(true); resultUrls = []; batchTasks = []; currentTask = null; await writeCurrentTask({ provider, model: selectedProviderModel(provider), status: "GENERATING", startedAt: Date.now(), total: rs.length, finished: 0, resultUrls: [], resultCacheIds: [], failures: [], error: "", prompt: $("prompt").value.trim() }); queueWorkspaceSave({ status: "GENERATING" });
     try {
@@ -851,7 +902,10 @@
         const ratio = { "1024x1024": "1:1", "1280x720": "16:9", "1024x768": "4:3", "768x1024": "3:4" }, model = selectedProviderModel("agnes");
         for (let i = 0; i < rs.length; i++) {
           try {
-            const data = await fetchAgnesWithRetry({ method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify({ model, prompt: $("prompt").value.trim(), size: "1K", ratio: ratio[$("size").value] || "1:1", extra_body: { image: [rs[i]], response_format: "url" } }) }, i);
+            const agnesBody = { model, prompt: $("prompt").value.trim(), size: "1K", ratio: ratio[$("size").value] || "1:1" };
+            if (rs[i]) agnesBody.extra_body = { image: [rs[i]], response_format: "url" };
+            else agnesBody.extra_body = { response_format: "url" };
+            const data = await fetchAgnesWithRetry({ method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify(agnesBody) }, i);
             const url = responseImage(data); if (!url) throw Error("Agnes 返回中没有图片"); resultUrls.push(url); batchTasks.push({ taskId: "agnes-" + (i + 1), status: "SUCCESS", url, referenceImage: rs[i] }); setProgress(Math.round((i + 1) / rs.length * 92)); await syncCurrentTask();
           } catch (e) { batchTasks.push({ taskId: "agnes-" + (i + 1), status: "FAILURE", error: e.message || String(e), referenceImage: rs[i] }); log("Agnes 第 " + (i + 1) + " 张失败：" + (e.message || e), "error"); await syncCurrentTask(); }
         }
@@ -862,7 +916,9 @@
         await persistHfsySubmissionSnapshot(startedAt, model, rs.length);
         for (let i = 0; i < rs.length; i++) {
           try {
-            const response = await fetch("https://www.hfsyapi.cn/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify({ model, prompt: $("prompt").value.trim(), size: $("size").value, response_format: "b64_json", reference_images: [rs[i]], n: 1 }) });
+            const hfsyBody = { model, prompt: $("prompt").value.trim(), size: $("size").value, response_format: "b64_json", n: 1 };
+            if (rs[i]) hfsyBody.reference_images = [rs[i]];
+            const response = await fetch("https://www.hfsyapi.cn/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify(hfsyBody) });
             const raw = await response.text(); let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
             const direct = responseImage(data);
             if (response.ok && direct) { resultUrls.push(direct); batchTasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: "direct-" + (i + 1), status: "SUCCESS", url: direct, referenceImage: rs[i] }); await persistHfsySubmissionSnapshot(startedAt, model, rs.length); log("hfsyapi 第 " + (i + 1) + " 张已直接返回图片。"); await syncCurrentTask(); continue; }

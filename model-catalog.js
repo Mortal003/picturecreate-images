@@ -8,7 +8,7 @@
     queryMethod: "GET",
     mode: "async",
     inputMode: "reference",
-    taskIdPaths: "task_id,id,data.task_id",
+    taskIdPaths: "id,task_id,data.task_id",
     statusPaths: "status,data.status,task_status,data.task_status",
     resultPaths: "images[0].url,data.images[0].url,data[0].url,result_url,data.result_url,output[0].url,images[0].b64_json,data[0].b64_json",
     successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED",
