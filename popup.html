@@ -344,7 +344,30 @@
           <h2>本次结果</h2>
           <button id="download-all" class="text-button">下载全部</button>
         </div>
+        <div id="upload-verify-alert" class="upload-verify-alert" hidden>
+          <strong id="upload-verify-title">店小秘图片添加重校验提示</strong>
+          <p id="upload-verify-desc"></p>
+          <ul class="upload-verify-solutions">
+            <li><strong>原因与排查：</strong>店小秘限制“图片最多选用9张”，插件已自动取消勾选并按 9-9-9 分批上传；若仍有未添加图片，通常是单张外链拉取超时或图片总栏位已满，可点击下方按钮一键补传。</li>
+            <li><strong>兜底方法一（复制链接添加）：</strong>点击下方“仅复制未添加链接”或“复制全部图片链接”，在店小秘先取消勾选已选图片，再点击“选择图片 -> 网络图片”直接粘贴。</li>
+            <li><strong>兜底方法二（从本地文件添加）：</strong>图片已自动保存至本地（或点击上方“下载全部”），可在店小秘点击“选择图片 -> 本地图片”从电脑文件夹直接批量选择添加。</li>
+          </ul>
+          <div class="upload-verify-actions">
+            <button id="retry-missing-dianxiaomi" class="folder-button" type="button">重新校验并补传缺失图片</button>
+            <button id="copy-missing-links" class="folder-button" type="button">仅复制未添加链接</button>
+          </div>
+        </div>
         <div id="result-grid" class="result-grid"></div>
+        <div id="result-links-box" class="result-links-box">
+          <div class="result-links-head">
+            <strong>本次图片链接记录（可随时复制兜底）</strong>
+            <div class="result-links-actions">
+              <button id="copy-all-result-links" class="folder-button" type="button">复制全部图片链接</button>
+              <button id="save-local-fallback" class="folder-button" type="button">保存到本地文件夹兜底</button>
+            </div>
+          </div>
+          <textarea id="result-links-text" class="result-links-text" readonly placeholder="生成完成后将在此处记录所有图片 URL 链接…"></textarea>
+        </div>
       </section>
       <section class="section execution-log">
         <div class="section-title">

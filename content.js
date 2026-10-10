@@ -149,28 +149,98 @@
       const txt=e=>(e?.innerText||e?.textContent||'').trim();
       const scope=document.querySelector('#imageInfo')||document;
       const realCount=()=>[...scope.querySelectorAll('.img-list img, img.img-css')].filter(img=>visible(img)&&img.naturalWidth>=80&&img.naturalHeight>=80&&!/(addImg|kong-|loading|placeholder|qiyukf\.nosdn)/i.test(img.currentSrc||img.src||'')).length;
+      const getSelectedCount=s=>{
+        const t=txt(s);
+        const m=t.match(/已经选用了\s*(\d+)\s*张/)||t.match(/已选\s*(\d+)\s*张/);
+        if(m)return Number(m[1]);
+        return [...s.querySelectorAll('input[type="checkbox"]:checked')].filter(cb=>{
+          const lb=txt(cb.closest('label')||cb.parentElement);
+          return !/全选|反选/.test(lb)&&(visible(cb)||visible(cb.parentElement));
+        }).length;
+      };
+      const uncheckAllImages=async s=>{
+        const isSelectAllOrInvert=el=>/全选|反选/.test(txt(el?.closest('label')||el?.parentElement));
+        const clickCheckedBoxes=async()=>{
+          const cbs=[...s.querySelectorAll('.img-list input[type="checkbox"], input[type="checkbox"]')].filter(cb=>!isSelectAllOrInvert(cb)&&(cb.checked||cb.closest('.ant-checkbox-checked,.checked,.is-checked,.selected')));
+          for(const cb of cbs){
+            if(cb.checked||cb.closest('.ant-checkbox-checked,.checked,.is-checked,.selected')){
+              cb.click();
+              await wait(45);
+              if(cb.checked&&cb.parentElement){cb.parentElement.click();await wait(45);}
+            }
+          }
+          const customBoxes=[...s.querySelectorAll('.img-list .ant-checkbox-checked, .img-list .checkbox-checked, .img-list .is-checked')].filter(el=>visible(el)&&!isSelectAllOrInvert(el)&&!el.querySelector('input[type="checkbox"]'));
+          for(const box of customBoxes){box.click();await wait(45);}
+        };
+        await clickCheckedBoxes();
+        await wait(180);
+        if(getSelectedCount(s)>0){
+          await clickCheckedBoxes();
+          await wait(180);
+        }
+        if(getSelectedCount(s)>0){
+          const selectAllLabel=[...s.querySelectorAll('label,span,div')].find(el=>visible(el)&&/^全选$/.test(txt(el)));
+          const selectAllInput=selectAllLabel?.querySelector('input[type="checkbox"]')||selectAllLabel?.previousElementSibling||selectAllLabel;
+          if(selectAllInput){
+            selectAllInput.click();
+            await wait(240);
+            if(getSelectedCount(s)>0){
+              selectAllInput.click();
+              await wait(240);
+            }
+          }
+        }
+      };
       const hoverClick=async el=>{['pointerover','mouseover','mouseenter'].forEach(t=>el.dispatchEvent(new MouseEvent(t,{bubbles:true,view:window})));await wait(220);el.click();};
       const menu=label=>{const wanted=label.replace(/\s+/g,'');const el=[...document.querySelectorAll('[role="menuitem"],li')].find(x=>visible(x)&&txt(x).replace(/\s+/g,'')===wanted);if(!el)throw Error('未找到菜单项：'+label);el.click();};
       try{
         if(!/dianxiaomi\.com$/.test(location.hostname))throw Error('当前页面不是店小秘产品编辑页。');
-        const choose=[...scope.querySelectorAll('button')].find(e=>visible(e)&&txt(e)==='选择图片');
-        if(!choose)throw Error('未找到产品图片操作按钮。');
-        const before=realCount();
-        // 历史流程曾是：编辑图片 → 清空图片 → 确认清空 → 网络图片 → 添加。
-        // 当前追加上传流程保留该说明，但运行时不执行清空，避免删除客户已有图片。
-        await hoverClick(choose); await wait(450); menu('网络图片'); await wait(500);
-        const modal=[...document.querySelectorAll('.ant-modal-wrap,[role="dialog"]')].find(e=>visible(e)&&txt(e).includes('从网络地址(URL)选择图片'));
-        if(!modal)throw Error('未找到网络图片输入弹窗。');
-        const area=modal.querySelector('textarea[placeholder*="图片URL"]')||modal.querySelector('textarea');
-        const add=[...modal.querySelectorAll('button')].find(e=>visible(e)&&txt(e).replace(/\s+/g,'')==='添加');
         const links=(message.urls||[]).map(String).map(x=>x.trim()).filter(x=>/^https?:\/\//i.test(x));
-        if(!area||!add||!links.length)throw Error('未找到图片 URL 输入框或没有可上传链接。');
-        const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set; if(setter)setter.call(area,links.join('\n')); else area.value=links.join('\n');
-        area.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); area.dispatchEvent(new Event('change',{bubbles:true})); await wait(250); add.click();
-        await wait(10000);
-        const delayedUploaded=realCount();
-        if(delayedUploaded<before+links.length)throw Error('添加后等待 10 秒，检测到 '+delayedUploaded+' 张图片，预期至少 '+(before+links.length)+' 张。');
-        sendResponse({ok:true,before,uploaded:delayedUploaded,added:links.length,expected:before+links.length});
+        if(!links.length)throw Error('没有可上传的图片 URL。');
+        // 店小秘限制最多选用 9 张图片，选用达 9 张后将拒绝新图上传。
+        // 上传前与每批次后均先把所有图片设为未选中状态（已选 0 张），并按 9-9-9 分批追加上传。
+        await uncheckAllImages(scope);
+        const before=realCount();
+        const BATCH_SIZE=9;
+        const batches=[];
+        for(let i=0;i<links.length;i+=BATCH_SIZE)batches.push(links.slice(i,i+BATCH_SIZE));
+        for(let bIdx=0;bIdx<batches.length;bIdx++){
+          const batchLinks=batches[bIdx];
+          await uncheckAllImages(scope);
+          const batchBefore=realCount();
+          const choose=[...scope.querySelectorAll('button')].find(e=>visible(e)&&txt(e)==='选择图片');
+          if(!choose)throw Error('未找到产品图片操作按钮。');
+          await hoverClick(choose); await wait(450); menu('网络图片'); await wait(500);
+          const modal=[...document.querySelectorAll('.ant-modal-wrap,[role="dialog"]')].find(e=>visible(e)&&txt(e).includes('从网络地址(URL)选择图片'));
+          if(!modal)throw Error('未找到网络图片输入弹窗。');
+          const area=modal.querySelector('textarea[placeholder*="图片URL"]')||modal.querySelector('textarea');
+          const add=[...modal.querySelectorAll('button')].find(e=>visible(e)&&txt(e).replace(/\s+/g,'')==='添加');
+          if(!area||!add)throw Error('未找到图片 URL 输入框或添加按钮。');
+          const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set; if(setter)setter.call(area,batchLinks.join('\n')); else area.value=batchLinks.join('\n');
+          area.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); area.dispatchEvent(new Event('change',{bubbles:true})); await wait(250); add.click();
+          await wait(3000);
+          for(let poll=0;poll<12;poll++){
+            if(realCount()>=batchBefore+batchLinks.length)break;
+            await wait(1000);
+          }
+          await uncheckAllImages(scope);
+          if(bIdx<batches.length-1)await wait(350);
+        }
+        let delayedUploaded=realCount();
+        if(delayedUploaded<before+links.length){
+          await wait(3000);
+          await uncheckAllImages(scope);
+          delayedUploaded=realCount();
+        }
+        if(delayedUploaded<before+links.length){
+          const actualAdded=Math.max(0,delayedUploaded-before);
+          const pageSrcs=[...scope.querySelectorAll('.img-list img, img.img-css')].map(img=>img.currentSrc||img.src||'');
+          const directMissing=links.filter(u=>{const name=u.split('?')[0].split('/').pop();return !pageSrcs.some(s=>s&&(s===u||(name&&name.length>6&&s.includes(name))));});
+          const missingUrls=directMissing.length===(links.length-actualAdded)?directMissing:links.slice(actualAdded);
+          sendResponse({ok:false,partial:actualAdded>0,before,uploaded:delayedUploaded,added:actualAdded,expected:before+links.length,batchCount:batches.length,missingCount:missingUrls.length,missingUrls,allUrls:links,error:'经取消勾选与 '+batches.length+' 批（9-9-9）上传及重校验：检测到 '+delayedUploaded+' 张图片，预期至少 '+(before+links.length)+' 张（本次成功添加 '+actualAdded+' 张，丢失 '+missingUrls.length+' 张）。'});
+          return;
+        }
+        sendResponse({ok:true,before,uploaded:delayedUploaded,added:links.length,expected:before+links.length,batchCount:batches.length,missingCount:0,missingUrls:[],allUrls:links});
       }catch(error){sendResponse({ok:false,error:error.message});}
     })(); return true;
   });

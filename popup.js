@@ -1247,19 +1247,178 @@
     if ($("auto-save")?.checked) { try { saved = await saveBatch(true); } catch (error) { saved = false; logTaskError("save", error); } }
     else log("已关闭自动保存，本次结果仅展示在插件中。", "info");
     if (!saved) log("结果已返回，但本地保存未完成。", "error");
+    missingDianxiaomiUrls = [];
+    lastUploadVerifyMessage = "";
     if (document.querySelector('input[name="upload-mode"]:checked')?.value === "auto" && successful.length) {
       try { status(message + " 正在自动上传到店小秘…"); await replaceToDianxiaomi(); }
       catch (error) { logTaskError("upload", error); status(message + " 但自动上传失败，请查看执行日志。", true); }
     }
     try {
       thinking(false); $("thinking").hidden = false; setProgress(100); renderCurrentTask(); renderResults();
-      status(saved ? message : message + " 但保存未完成，请查看执行日志。", !saved);
+      if (lastUploadVerifyMessage) {
+        status(message + " 警告：" + lastUploadVerifyMessage, true);
+      } else {
+        status(saved ? message : message + " 但保存未完成，请查看执行日志。", !saved);
+      }
       renderHistory();
       renderImages();
     } catch (error) { logTaskError("render", error); }
   }
-  async function replaceToDianxiaomi() { const t = await getPageTab(); if (!t || t.url.indexOf("dianxiaomi.com/web/amazon/edit") < 0) return status("请先切换到店小秘产品编辑页。", true); const us = resultUrls.filter(u => /^https?:\/\//i.test(u)); if (!us.length) return status("没有可追加的图片 URL，原有图片保持不变。", true); status("正在追加图片到店小秘…"); try { const r = await chrome.tabs.sendMessage(t.id, { type: "AUTO_REPLACE_DIANXIAOMI", urls: us, secondsPerImage: 1000 }); if (!r?.ok) throw Error(r?.error || "自动追加上传失败"); status("网络图片追加并校验成功：新增 " + (r.added || us.length) + " 张，当前共 " + r.uploaded + " 张图片。"); } catch (e) { status(pageConnectionMessage(e), true); } }
-  function renderResults() { const grid = $("result-grid"); grid.innerHTML = ""; $("results").hidden = false; const head = $("download-all").parentElement; if (!$("replace-all")) { const b = document.createElement("button"); b.id = "replace-all"; b.className = "text-button"; b.textContent = "全部上传到店小秘"; b.onclick = replaceToDianxiaomi; head.appendChild(b); } resultUrls.forEach((url, index) => { const c = document.createElement("div"); c.className = "result-card"; const im = document.createElement("img"); im.src = url; const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.download = filename(index); a.textContent = "打开/下载"; c.append(im, a); grid.appendChild(c); }); }
+  let missingDianxiaomiUrls = [];
+  let lastUploadVerifyMessage = "";
+  function copyTextToClipboard(text, successMsg) {
+    const val = String(text || "").trim();
+    if (!val) return status("当前没有可复制的图片链接。", true);
+    const area = $("result-links-text");
+    if (area) { area.value = val; area.focus(); area.select(); }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(val).then(() => status(successMsg)).catch(() => {
+        try { document.execCommand("copy"); status(successMsg); } catch { status("已选中链接文本，请按 Ctrl+C 复制。", true); }
+      });
+    } else {
+      try { document.execCommand("copy"); status(successMsg); } catch { status("已选中链接文本，请按 Ctrl+C 复制。", true); }
+    }
+  }
+  function updateResultLinksBox() {
+    const area = $("result-links-text");
+    if (!area) return;
+    const allLinks = resultUrls.filter(u => /^https?:\/\//i.test(u));
+    if (!allLinks.length) {
+      area.value = resultUrls.length ? "当前结果为本地内嵌图片（Base64），请使用“保存到本地文件夹兜底”或“下载全部”后从店小秘本地图片上传。" : "";
+      return;
+    }
+    if (missingDianxiaomiUrls.length) {
+      area.value = [
+        "【未添加成功的缺失链接（共 " + missingDianxiaomiUrls.length + " 张，可点上方按钮一键复制）】",
+        ...missingDianxiaomiUrls,
+        "",
+        "【本次生成的全部图片链接（共 " + allLinks.length + " 张）】",
+        ...allLinks
+      ].join("\n");
+    } else {
+      area.value = allLinks.join("\n");
+    }
+  }
+  function renderUploadVerifyState() {
+    const alertBox = $("upload-verify-alert");
+    const titleEl = $("upload-verify-title");
+    const descEl = $("upload-verify-desc");
+    const retryBtn = $("retry-missing-dianxiaomi");
+    const copyMissingBtn = $("copy-missing-links");
+    if (!alertBox) return;
+    if (!lastUploadVerifyMessage) {
+      alertBox.hidden = true;
+      return;
+    }
+    alertBox.hidden = false;
+    if (titleEl) {
+      titleEl.textContent = missingDianxiaomiUrls.length
+        ? "店小秘图片添加重校验警告：有 " + missingDianxiaomiUrls.length + " 张图片未添加进去"
+        : "店小秘图片添加重校验提示";
+    }
+    if (descEl) {
+      descEl.textContent = lastUploadVerifyMessage + " 下方已完整记录本次生成的图片链接，您可选择补传、复制缺失链接手动粘贴，或从本地保存文件夹直接添加兜底。";
+    }
+    if (retryBtn) {
+      retryBtn.textContent = missingDianxiaomiUrls.length
+        ? "重新校验并补传缺失图片（" + missingDianxiaomiUrls.length + "张）"
+        : "重新尝试上传到店小秘";
+    }
+    if (copyMissingBtn) {
+      copyMissingBtn.textContent = missingDianxiaomiUrls.length
+        ? "仅复制未添加链接（" + missingDianxiaomiUrls.length + "张）"
+        : "复制全部图片链接";
+    }
+  }
+  async function replaceToDianxiaomi(urlsOverride = null) {
+    const t = await getPageTab();
+    if (!t || t.url.indexOf("dianxiaomi.com/web/amazon/edit") < 0) return status("请先切换到店小秘产品编辑页。", true);
+    const allRemote = resultUrls.filter(u => /^https?:\/\//i.test(u));
+    const us = Array.isArray(urlsOverride) && urlsOverride.length ? urlsOverride.filter(u => /^https?:\/\//i.test(u)) : allRemote;
+    if (!us.length) return status("没有可追加的图片 URL，原有图片保持不变。", true);
+    const batchCount = Math.ceil(us.length / 9);
+    const replaceAllBtn = $("replace-all");
+    const retryBtn = $("retry-missing-dianxiaomi");
+    if (replaceAllBtn) {
+      replaceAllBtn.disabled = true;
+      replaceAllBtn.textContent = batchCount > 1 ? "分批上传中（" + batchCount + "批）…" : "上传店小秘中…";
+    }
+    if (retryBtn) retryBtn.disabled = true;
+    status(
+      batchCount > 1
+        ? "正在自动取消店小秘已选图片，并按 9-9-9 分 " + batchCount + " 批上传共 " + us.length + " 张图片…"
+        : "正在自动取消店小秘已选图片，并上传 " + us.length + " 张图片与重校验…"
+    );
+    try {
+      const r = await chrome.tabs.sendMessage(t.id, { type: "AUTO_REPLACE_DIANXIAOMI", urls: us, secondsPerImage: 1000 });
+      if (!r?.ok) {
+        missingDianxiaomiUrls = Array.isArray(r?.missingUrls) && r.missingUrls.length ? r.missingUrls : us;
+        lastUploadVerifyMessage = r?.error || "自动追加上传未完全成功";
+        log("[重校验警告] " + lastUploadVerifyMessage + " 建议：1.检查店小秘图片栏是否已达总容量上限；2.点击补传或复制下方缺失链接手动粘贴。", "error");
+        renderUploadVerifyState();
+        updateResultLinksBox();
+        status(lastUploadVerifyMessage + " 请查看“本次结果”中的重校验提示与链接兜底面板。", true);
+        return;
+      }
+      missingDianxiaomiUrls = [];
+      lastUploadVerifyMessage = "";
+      renderUploadVerifyState();
+      updateResultLinksBox();
+      status(
+        "网络图片追加并重校验成功（共分 " + (r.batchCount || batchCount) + " 批，每批前已自动取消勾选）：新增 " +
+        (r.added || us.length) + " 张，当前页面共 " + r.uploaded + " 张图片。"
+      );
+    } catch (e) {
+      missingDianxiaomiUrls = us;
+      lastUploadVerifyMessage = pageConnectionMessage(e);
+      renderUploadVerifyState();
+      updateResultLinksBox();
+      status(lastUploadVerifyMessage, true);
+    } finally {
+      if (replaceAllBtn) {
+        replaceAllBtn.disabled = false;
+        replaceAllBtn.textContent = "全部上传到店小秘";
+      }
+      if (retryBtn) retryBtn.disabled = false;
+    }
+  }
+  function renderResults() {
+    const grid = $("result-grid");
+    grid.innerHTML = "";
+    $("results").hidden = false;
+    const head = $("download-all").parentElement;
+    if (!$("replace-all")) {
+      const b = document.createElement("button");
+      b.id = "replace-all";
+      b.className = "text-button";
+      b.textContent = "全部上传到店小秘";
+      b.title = "自动取消店小秘已选图片，并按最多9张一批（9-9-9）全部上传到店小秘";
+      b.onclick = () => replaceToDianxiaomi();
+      head.appendChild(b);
+    }
+    resultUrls.forEach((url, index) => {
+      const c = document.createElement("div");
+      c.className = "result-card";
+      const im = document.createElement("img");
+      im.src = url;
+      const actions = document.createElement("div");
+      actions.className = "result-card-actions";
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.download = filename(index);
+      a.textContent = "打开/下载";
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.textContent = "复制链接";
+      copyBtn.onclick = () => copyTextToClipboard(url, "已复制第 " + (index + 1) + " 张图片链接。");
+      actions.append(a, copyBtn);
+      c.append(im, actions);
+      grid.appendChild(c);
+    });
+    renderUploadVerifyState();
+    updateResultLinksBox();
+  }
   function renderHistory() { const list = $("history-list"); list.innerHTML = history.length ? history.slice().reverse().map(x => { const image = x.url ? '<img src="' + x.url + '">' : '<div class="history-placeholder">已保存图片</div>'; const link = x.url ? '<a target="_blank" href="' + x.url + '">打开</a>' : '<span class="muted">本地文件或内嵌结果</span>'; return '<div class="history-item">' + image + '<div><p>' + String(x.prompt || "").replaceAll("<", "&lt;") + '</p><time>' + new Date(x.createdAt).toLocaleString() + '</time></div>' + link + '</div>'; }).join("") : '<p class="muted">暂无生成记录</p>'; }
   async function chooseFolder() { if (!window.showDirectoryPicker) return status("当前浏览器不支持选择文件夹，无法使用本地文件夹模式。", true); try { directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" }); await persistHandle(directoryHandle); $("folder-status").textContent = "已选择本地文件夹，生成后直接保存"; status("本地文件夹已授权并持久化。"); } catch (e) { if (e.name !== "AbortError") status("选择文件夹失败：" + e.message, true); } }
   function bind() {
@@ -1275,6 +1434,21 @@
     $("size")?.addEventListener("change", () => {
       chrome.storage.local.set({ selectedSize: $("size").value }).catch(() => {});
       queueWorkspaceSave();
+    });
+    $("retry-missing-dianxiaomi")?.addEventListener("click", () => {
+      replaceToDianxiaomi(missingDianxiaomiUrls.length ? missingDianxiaomiUrls : null);
+    });
+    $("copy-missing-links")?.addEventListener("click", () => {
+      const target = missingDianxiaomiUrls.length ? missingDianxiaomiUrls : resultUrls.filter(u => /^https?:\/\//i.test(u));
+      copyTextToClipboard(target.join("\n"), "已复制 " + target.length + " 条未添加图片链接，可去店小秘“网络图片”直接粘贴。");
+    });
+    $("copy-all-result-links")?.addEventListener("click", () => {
+      const all = resultUrls.filter(u => /^https?:\/\//i.test(u));
+      copyTextToClipboard(all.join("\n"), "已复制本次生成的全部 " + all.length + " 条图片链接。");
+    });
+    $("save-local-fallback")?.addEventListener("click", async () => {
+      const ok = await saveBatch(true);
+      if (ok) status("图片已保存至本地，可在店小秘点击“选择图片 -> 本地图片”从保存目录直接添加。");
     });
     ["standard-api-key", "custom-api-key"].forEach(id => {
       const el = document.getElementById(id);
