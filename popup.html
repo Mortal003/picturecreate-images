@@ -115,10 +115,12 @@
             <option value="hfsy">hfsyapi · GPT-image-2</option>
             <option value="custom">自定义中转站</option>
           </select></label
-        ><label
-          >API Key <input id="api-key" type="password" placeholder="sk-…"
-        /></label>
-        <div class="provider-save-row">
+        <div id="standard-key-host">
+          <label id="api-key-label"
+            >API Key <input id="api-key" type="password" placeholder="sk-…"
+          /></label>
+        </div>
+        <div id="standard-save-row" class="provider-save-row">
           <button id="save-provider-config" class="folder-button" type="button">
             保存当前中转站配置
           </button>
@@ -126,119 +128,124 @@
             >未保存</span
           >
         </div>
-        <details id="custom-provider-panel" class="custom-provider-panel">
-          <summary>自定义中转站配置</summary>
-          <div class="custom-provider-fields">
-            <div class="custom-model-presets">
-              <label>保存当前模型配置<input id="custom-preset-name" placeholder="例如：我的4K主图节点" /></label>
-              <div class="prompt-preset-actions">
-                <button id="save-custom-preset" class="folder-button" type="button">保存为预设</button>
-                <select id="custom-preset-select"><option value="">选择已保存模型</option></select>
-                <button id="load-custom-preset" class="folder-button" type="button">载入</button>
-                <button id="delete-custom-preset" class="text-button" type="button">删除</button>
-              </div>
-              <p class="hint">可将当前填写的接口地址、模型名、密钥和协议参数保存为预设，方便一键切换。</p>
+        <div id="custom-provider-panel" class="custom-provider-panel" hidden>
+          <div class="custom-model-presets">
+            <label>保存当前模型配置<input id="custom-preset-name" placeholder="例如：我的4K主图节点" /></label>
+            <div class="prompt-preset-actions">
+              <button id="save-custom-preset" class="folder-button" type="button">保存为预设</button>
+              <select id="custom-preset-select"><option value="">选择已保存模型</option></select>
+              <button id="load-custom-preset" class="folder-button" type="button">载入</button>
+              <button id="delete-custom-preset" class="text-button" type="button">删除</button>
             </div>
-            <label
-              >接口协议<select id="custom-protocol">
-                <option value="auto">自动识别（推荐）</option>
-                <option value="agnes">Agnes 图像协议</option>
-                <option value="hfsy">GPT-image / hfsyapi 协议</option>
-                <option value="hfsy-task-catalog">任务目录图像协议（/v1/image/create）</option>
-                <option value="openai">通用 OpenAI 图像协议</option>
-                <option value="advanced">其他接口（高级）</option>
-              </select></label
-            >
+            <p class="hint">可将当前填写的接口地址、密钥和模型名称保存为预设，方便一键切换。</p>
+          </div>
+          <div id="custom-core-fields" class="custom-core-fields">
             <label
               >Base URL<input
                 id="custom-base-url"
                 placeholder="https://api.example.com/v1" /></label
-            ><label
-              >内置模型<select id="custom-model-preset">
+            >
+            <label
+              >模型名称<input id="custom-model" value="gpt-image-2" /></label
+            >
+            <label
+              >内置模型参考（可选）<select id="custom-model-preset">
                 <option value="">自定义模型（手动填写）</option>
               </select></label
-            ><label
-              >模型名称<input id="custom-model" value="gpt-image-2" /></label
-            ><p id="custom-model-hint" class="custom-protocol-hint" hidden></p>
+            >
+            <p id="custom-model-hint" class="custom-protocol-hint" hidden></p>
             <p id="custom-protocol-hint" class="custom-protocol-hint">
-              必填：Base URL、API Key、模型名称。未知中转站默认按 OpenAI 图像协议接入。
+              极简生图：仅需填写 Base URL、API Key 与模型名称 3 项。插件内置万能寻图，自动兼容标准 OpenAI 接口。
             </p>
-            <p id="custom-config-summary" class="custom-config-summary" aria-live="polite"></p>
-            <details id="custom-advanced-config" class="custom-mapping-panel" hidden>
-              <summary>高级接口参数</summary>
-              <div class="custom-provider-fields custom-mapping-fields">
-                <label
-                  >生成接口路径<input
-                    id="custom-generate-path"
-                    value="/images/generations"
-                /></label>
-                <label
-                  >查询接口路径（异步）<input
-                    id="custom-query-path"
-                    value="/images/generations/{task_id}"
-                /></label>
-                <label
-                  >请求模式<select id="custom-mode">
-                    <option value="sync">同步返回</option>
-                    <option value="async">异步任务</option>
-                  </select></label>
-                <label
-                  >查询请求方法<select id="custom-query-method">
-                    <option value="auto">自动（GET，受限时 POST）</option>
-                    <option value="get">GET</option>
-                    <option value="post">POST</option>
-                  </select></label>
-                <label
-                  >API Key 认证方式<select id="custom-auth-mode">
-                    <option value="bearer">Bearer Token</option>
-                    <option value="x-api-key">x-api-key</option>
-                    <option value="api-key">api-key</option>
-                    <option value="custom-header">自定义 Header</option>
-                  </select></label>
-                <label id="custom-auth-header-row" hidden
-                  >自定义 Header 名称<input
-                    id="custom-auth-header"
-                    placeholder="例如：X-Token"
-                    autocomplete="off"
-                /></label>
-                <label
-                  >图片输入字段<select id="custom-input-mode">
-                    <option value="openai">extra_body.image</option>
-                    <option value="reference">reference_images</option>
-                    <option value="image">image</option>
-                    <option value="both">同时发送两种字段</option>
-                  </select></label>
-                <label
-                  >任务 ID 字段<input
-                    id="custom-task-id-path"
-                    value="task_id,data.task_id,id"
-                /></label>
-                <label
-                  >任务状态字段<input
-                    id="custom-status-path"
-                    value="status,data.status"
-                /></label>
-                <label
-                  >图片结果字段<input
-                    id="custom-result-path"
-                    value="data[0].url,result_url,data.result_url,data[0].b64_json"
-                /></label>
-                <label
-                  >成功状态（逗号分隔）<input
-                    id="custom-success-states"
-                    value="SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"
-                /></label>
-                <label
-                  >失败状态（逗号分隔）<input
-                    id="custom-failure-states"
-                    value="FAILURE,FAILED,ERROR,CANCELLED"
-                /></label>
-              </div>
-            </details>
-            <div class="custom-test-row">
-              <button id="test-custom-config" class="folder-button" type="button">测试配置</button>
-              <span id="custom-test-result" class="custom-test-result" aria-live="polite"></span>
+          </div>
+          <div class="custom-test-row">
+            <button id="save-custom-provider-config" class="folder-button" type="button">保存当前配置</button>
+            <button id="test-custom-config" class="folder-button" type="button">测试配置</button>
+            <span id="custom-test-result" class="custom-test-result" aria-live="polite"></span>
+          </div>
+          <p id="custom-config-summary" class="custom-config-summary" aria-live="polite"></p>
+          <details id="custom-advanced-config" class="custom-mapping-panel">
+            <summary>高级接口参数与协议覆盖（可选，默认自动适配）</summary>
+            <div class="custom-provider-fields custom-mapping-fields">
+              <label
+                >接口协议<select id="custom-protocol">
+                  <option value="auto">自动识别（推荐）</option>
+                  <option value="agnes">Agnes 图像协议</option>
+                  <option value="hfsy">GPT-image / hfsyapi 协议</option>
+                  <option value="hfsy-task-catalog">任务目录图像协议（/v1/image/create）</option>
+                  <option value="openai">通用 OpenAI 图像协议</option>
+                  <option value="advanced">其他接口（高级）</option>
+                </select></label
+              >
+              <label
+                >生成接口路径<input
+                  id="custom-generate-path"
+                  value="/images/generations"
+              /></label>
+              <label
+                >查询接口路径（异步）<input
+                  id="custom-query-path"
+                  value="/images/generations/{task_id}"
+              /></label>
+              <label
+                >请求模式<select id="custom-mode">
+                  <option value="sync">同步返回</option>
+                  <option value="async">异步任务</option>
+                </select></label>
+              <label
+                >查询请求方法<select id="custom-query-method">
+                  <option value="auto">自动（GET，受限时 POST）</option>
+                  <option value="get">GET</option>
+                  <option value="post">POST</option>
+                </select></label>
+              <label
+                >API Key 认证方式<select id="custom-auth-mode">
+                  <option value="bearer">Bearer Token</option>
+                  <option value="x-api-key">x-api-key</option>
+                  <option value="api-key">api-key</option>
+                  <option value="custom-header">自定义 Header</option>
+                </select></label>
+              <label id="custom-auth-header-row" hidden
+                >自定义 Header 名称<input
+                  id="custom-auth-header"
+                  placeholder="例如：X-Token"
+                  autocomplete="off"
+              /></label>
+              <label
+                >图片输入字段<select id="custom-input-mode">
+                  <option value="openai">extra_body.image</option>
+                  <option value="reference">reference_images</option>
+                  <option value="image">image</option>
+                  <option value="both">同时发送两种字段</option>
+                </select></label>
+              <label
+                >任务 ID 字段<input
+                  id="custom-task-id-path"
+                  value="task_id,data.task_id,id"
+              /></label>
+              <label
+                >任务状态字段<input
+                  id="custom-status-path"
+                  value="status,data.status"
+              /></label>
+              <label
+                >图片结果字段<input
+                  id="custom-result-path"
+                  value="data[0].url,result_url,data.result_url,data[0].b64_json"
+              /></label>
+              <label
+                >成功状态（逗号分隔）<input
+                  id="custom-success-states"
+                  value="SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"
+              /></label>
+              <label
+                >失败状态（逗号分隔）<input
+                  id="custom-failure-states"
+                  value="FAILURE,FAILED,ERROR,CANCELLED"
+              /></label>
             </div>
+          </details>
+        </div>
             <details class="provider-guide">
               <summary>高级配置填写指南（看不懂时可复制给 AI）</summary>
               <div class="provider-guide-content">

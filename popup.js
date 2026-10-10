@@ -193,7 +193,7 @@
   const storageCleanupReady = cleanupLegacyInlineImageData().catch(error => { console.warn("无法清理旧图片缓存", error); return false; });
   function providerModelOptions(provider) { if (provider === "agnes") return [["agnes-image-2.5-flash", "Agnes Image 2.5 Flash"], ["agnes-image-2.1-flash", "Agnes Image 2.1 Flash"], ["agnes-image-2.0-flash", "Agnes Image 2.0 Flash"]]; if (provider === "hfsy") return [["gpt-image-2", "GPT-image-2"], ["gpt-image-2.5", "GPT-image-2.5"]]; return []; }
   function installProviderModelControl(provider, value) { const settings = document.querySelector(".settings"); if (!settings) return; let label = $("provider-model-control"); if (!label) { label = document.createElement("label"); label.id = "provider-model-control"; label.textContent = "模型 "; const select = document.createElement("select"); select.id = "provider-model"; label.appendChild(select); const key = $("api-key"); key?.parentElement?.insertAdjacentElement("afterend", label); select.onchange = async () => { setProviderSaveStatus("模型已更改，正在保存…"); await saveProviderConfig(false, activeProvider); setProviderSaveStatus("模型已保存：" + select.value); updateButton(); }; } const select = $("provider-model"), options = providerModelOptions(provider); const visible = options.length > 0; label.hidden = !visible; label.style.display = visible ? "" : "none"; if (!select || !visible) { updateCustomProviderUi(); return; } select.innerHTML = options.map(([id, text]) => '<option value="' + id + '">' + text + '</option>').join(""); const valid = options.some(([id]) => id === value); select.value = valid ? value : options[0][0]; updateCustomProviderUi(); }
-  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next), "customModelPreset"]); $("api-key").value = state[providerKeyName(next)] || ""; if (next === "custom") { lastCustomKeyValue = $("api-key").value.trim(); installCatalogModelControl(state.customModelPreset || ""); } else setCatalogSizeOptions(null); installProviderModelControl(next, state[providerModelName(next)]); $("custom-provider-panel").open = next === "custom"; updateCustomProviderUi(); setProviderSaveStatus(maskedKey($("api-key").value)); queueWorkspaceSave(); updateButton(); }
+  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next), "customModelPreset"]); $("api-key").value = state[providerKeyName(next)] || ""; if (next === "custom") { lastCustomKeyValue = $("api-key").value.trim(); installCatalogModelControl(state.customModelPreset || ""); } else setCatalogSizeOptions(null); installProviderModelControl(next, state[providerModelName(next)]); if ($("custom-provider-panel")) $("custom-provider-panel").hidden = next !== "custom"; updateCustomProviderUi(); setProviderSaveStatus(maskedKey($("api-key").value)); queueWorkspaceSave(); updateButton(); }
   const providerAwareFetch = window.fetch;
   window.fetch = (input, init = {}) => { const url = String(input || ""); if (init.body && (activeProvider === "agnes" && /apihub\.agnes-ai\.com/.test(url) || activeProvider === "hfsy" && /hfsyapi\.cn/.test(url))) { try { const body = JSON.parse(init.body); body.model = selectedProviderModel(activeProvider); return providerAwareFetch(input, { ...init, body: JSON.stringify(body) }); } catch {} } return providerAwareFetch(input, init); };
   function saveMode() { return $("save-mode")?.value === "downloads" ? "downloads" : "local"; }
@@ -245,21 +245,37 @@
   function updateCustomProviderUi() {
     const provider = $("provider")?.value;
     const isCustom = provider === "custom";
+    const keyLabel = $("api-key-label");
+    const customCore = $("custom-core-fields");
+    const standardKeyHost = $("standard-key-host");
+    const standardSaveRow = $("standard-save-row");
+    if (isCustom) {
+      if (keyLabel && customCore && keyLabel.parentElement !== customCore) {
+        customCore.insertBefore(keyLabel, $("custom-model")?.parentElement || null);
+      }
+      if (standardSaveRow) standardSaveRow.hidden = true;
+    } else {
+      if (keyLabel && standardKeyHost && keyLabel.parentElement !== standardKeyHost) {
+        standardKeyHost.appendChild(keyLabel);
+      }
+      if (standardSaveRow) standardSaveRow.hidden = false;
+    }
     const apiKey = $("api-key");
     if (apiKey?.parentElement) apiKey.parentElement.firstChild.nodeValue = isCustom ? "自定义 API Key " : "API Key ";
     const panel = $("custom-provider-panel");
-    if (panel) panel.open = isCustom;
+    if (panel) panel.hidden = !isCustom;
     const protocol = $("custom-protocol")?.value || "auto";
-    const advanced = $("custom-advanced-config");
-    if (advanced) advanced.hidden = !isCustom || protocol !== "advanced";
     const authHeaderRow = $("custom-auth-header-row");
     if (authHeaderRow) authHeaderRow.hidden = !isCustom || protocol !== "advanced" || ($("custom-auth-mode")?.value || "bearer") !== "custom-header";
     const hint = $("custom-protocol-hint");
-    if (hint) hint.textContent = customProtocolHints[protocol] || customProtocolHints.auto;
+    if (hint) hint.textContent = isCustom ? (customProtocolHints[protocol] || customProtocolHints.auto) : "";
     const modelControl = $("provider-model-control");
     if (modelControl && isCustom) { modelControl.hidden = true; modelControl.style.display = "none"; }
     const summary = $("custom-config-summary");
-    if (summary && isCustom) { const cfg = customConfig(); summary.textContent = "当前协议：" + (cfg.protocol === "auto" ? "自动识别" : cfg.protocol) + " · 查询：" + (cfg.queryMethod === "auto" ? "自动 GET / POST 回退" : cfg.queryMethod.toUpperCase()) + " · 认证：" + (cfg.authMode === "bearer" ? "Bearer" : cfg.authMode); }
+    if (summary && isCustom) {
+      const cfg = customConfig();
+      summary.textContent = "当前生效协议：" + (cfg.protocol === "auto" ? "智能识别" : cfg.protocol) + " · 接口模式：" + (cfg.mode === "sync" ? "同步生成" : "异步任务") + " · 认证：" + (cfg.authMode === "bearer" ? "Bearer" : cfg.authMode);
+    }
     const template = $("custom-ai-template");
     if (template && !template.value) template.value = customAiTemplate();
   }
@@ -520,8 +536,47 @@
   }
   function customValue(id, fallback = "") { return $(id)?.value.trim() || fallback; }
   function catalogEntry(model) { return (Array.isArray(window.MODEL_CATALOG) ? window.MODEL_CATALOG : []).find(item => item.id === model) || null; }
-  const defaultSizeOptions = [["1024x1024", "1:1 · 1024×1024"], ["1280x720", "16:9 · 1280×720"], ["1024x768", "4:3 · 1024×768"], ["768x1024", "3:4 · 768×1024"]];
-  function setCatalogSizeOptions(item) { const size = $("size"); if (!size) return; const current = size.value; if (item) { size.innerHTML = item.sizes.map(value => '<option value="' + value + '">' + value + '</option>').join(""); size.value = item.sizes.includes(current) ? current : item.sizes[0]; } else { size.innerHTML = defaultSizeOptions.map(([value, label]) => '<option value="' + value + '">' + label + '</option>').join(""); size.value = defaultSizeOptions.some(([value]) => value === current) ? current : defaultSizeOptions[0][0]; } }
+  const DEFAULT_SIZE_HTML = [
+    '<optgroup label="1K 标清电商主图">',
+    '  <option value="1024x1024">1:1 · 1024×1024 标清正方形</option>',
+    '  <option value="1280x720">16:9 · 1280×720 横版宽屏</option>',
+    '  <option value="720x1280">9:16 · 720×1280 竖版海报</option>',
+    '  <option value="768x1024">3:4 · 768×1024 竖版主图</option>',
+    '  <option value="1024x768">4:3 · 1024×768 横版主图</option>',
+    '</optgroup>',
+    '<optgroup label="2K 高清电商主图">',
+    '  <option value="2048x2048">1:1 · 2048×2048 2K正方形</option>',
+    '  <option value="2560x1440">16:9 · 2560×1440 2K横版</option>',
+    '  <option value="1440x2560">9:16 · 1440×2560 2K竖版</option>',
+    '  <option value="1536x2048">3:4 · 1536×2048 2K竖版</option>',
+    '  <option value="2048x1536">4:3 · 2048×1536 2K横版</option>',
+    '</optgroup>',
+    '<optgroup label="4K 超清细节">',
+    '  <option value="4096x4096">1:1 · 4096×4096 4K正方形</option>',
+    '  <option value="3840x2160">16:9 · 3840×2160 4K横版</option>',
+    '  <option value="2160x3840">9:16 · 2160×3840 4K竖版</option>',
+    '  <option value="3072x4096">3:4 · 3072×4096 4K竖版</option>',
+    '  <option value="4096x3072">4:3 · 4096×3072 4K横版</option>',
+    '</optgroup>',
+    '<optgroup label="纯尺寸代号">',
+    '  <option value="1K">1K · 极简代号</option>',
+    '  <option value="2K">2K · 极简代号</option>',
+    '  <option value="4K">4K · 极简代号</option>',
+    '</optgroup>'
+  ].join("");
+  function setCatalogSizeOptions(item) {
+    const size = $("size");
+    if (!size) return;
+    const current = size.value;
+    if (item && Array.isArray(item.sizes) && item.sizes.length) {
+      size.innerHTML = item.sizes.map(value => '<option value="' + value + '">' + value + '</option>').join("");
+      size.value = item.sizes.includes(current) ? current : item.sizes[0];
+    } else {
+      size.innerHTML = DEFAULT_SIZE_HTML;
+      const exists = Array.from(size.options).some(opt => opt.value === current);
+      size.value = exists ? current : "1024x1024";
+    }
+  }
   function installCatalogModelControl(value) {
     const select = $("custom-model-preset"); if (!select) return;
     const catalog = Array.isArray(window.MODEL_CATALOG) ? window.MODEL_CATALOG : [];
@@ -544,7 +599,7 @@
     update();
   }
   const CUSTOM_RESULT_PATHS = "data[0].url,data[0].b64_json,data[0].b64_data,result_url,data.result_url,output.url,output[0].url,images[0].url";
-  function customConfig() { return { protocol: $("custom-protocol")?.value || "auto", base: customValue("custom-base-url").replace(/\/$/, ""), generatePath: customValue("custom-generate-path", "/images/generations"), queryPath: customValue("custom-query-path", "/images/generations/{task_id}"), model: customValue("custom-model", "gpt-image-2"), mode: $("custom-mode")?.value || "sync", inputMode: $("custom-input-mode")?.value || "openai", taskIdPaths: customValue("custom-task-id-path", "task_id,data.task_id,id"), statusPaths: customValue("custom-status-path", "status,data.status"), resultPaths: customValue("custom-result-path", CUSTOM_RESULT_PATHS), successStates: customValue("custom-success-states", "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"), failureStates: customValue("custom-failure-states", "FAILURE,FAILED,ERROR,CANCELLED"), authMode: $("custom-auth-mode")?.value || "bearer", authHeader: customValue("custom-auth-header"), queryMethod: $("custom-query-method")?.value || "auto", catalog: catalogEntry($("custom-model-preset")?.value) }; }
+  function customConfig() { return { protocol: $("custom-protocol")?.value || "auto", base: cleanCustomBaseUrl(customValue("custom-base-url")), generatePath: customValue("custom-generate-path", "/images/generations"), queryPath: customValue("custom-query-path", "/images/generations/{task_id}"), model: customValue("custom-model", "gpt-image-2"), mode: $("custom-mode")?.value || "sync", inputMode: $("custom-input-mode")?.value || "openai", taskIdPaths: customValue("custom-task-id-path", "task_id,data.task_id,id"), statusPaths: customValue("custom-status-path", "status,data.status"), resultPaths: customValue("custom-result-path", CUSTOM_RESULT_PATHS), successStates: customValue("custom-success-states", "SUCCESS,COMPLETED,SUCCEEDED,DONE,FINISHED"), failureStates: customValue("custom-failure-states", "FAILURE,FAILED,ERROR,CANCELLED"), authMode: $("custom-auth-mode")?.value || "bearer", authHeader: customValue("custom-auth-header"), queryMethod: $("custom-query-method")?.value || "auto", catalog: catalogEntry($("custom-model-preset")?.value) }; }
   function resolveCustomProtocol(cfg) {
     if (cfg.protocol && cfg.protocol !== "auto") return cfg.protocol;
     let hostname = "";
@@ -553,8 +608,13 @@
     if (hostname === "hfsyapi.cn" || hostname.endsWith(".hfsyapi.cn")) return "hfsy";
     return "openai";
   }
+  function cleanCustomBaseUrl(base) {
+    let clean = String(base || "").trim().replace(/\/+$/, "");
+    clean = clean.replace(/\/(images\/generations|image\/create|image\/query|images|v1\/image\/create|v1\/images\/generations)$/i, "");
+    return clean.replace(/\/+$/, "");
+  }
   function joinCustomUrl(base, path) {
-    const root = String(base || "").replace(/\/+$/, "");
+    const root = cleanCustomBaseUrl(base);
     let suffix = String(path || "").trim() || "/";
     if (!suffix.startsWith("/")) suffix = "/" + suffix;
     if (/\/v1$/i.test(root) && /^\/v1(?:\/|$)/i.test(suffix)) suffix = suffix.slice(3) || "/";
@@ -576,7 +636,49 @@
   }
   function customPathValue(data, path) { const parts = String(path || "").trim().replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean); let value = data; for (const part of parts) { if (value === null || value === undefined || !Object.prototype.hasOwnProperty.call(Object(value), part)) return undefined; value = value[part]; } return value; }
   function customFirstValue(data, paths) { for (const path of String(paths || "").split(",").map(item => item.trim()).filter(Boolean)) { const value = customPathValue(data, path); if (value !== undefined && value !== null && value !== "") return { value, path }; } return { value: undefined, path: "" }; }
-  function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value === "string") { if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; } return responseImage(data); }
+  function findImageDeep(value, key = "") {
+    if (!value) return "";
+    if (typeof value === "string") {
+      if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) return value;
+      if (/b64|base64/i.test(key) && value.length > 100) return "data:image/png;base64," + value;
+      return "";
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findImageDeep(item, key);
+        if (found) return found;
+      }
+      return "";
+    }
+    if (typeof value === "object") {
+      for (const k of ["url", "result_url", "image_url", "output_url", "download_url", "b64_json", "base64"]) {
+        if (value[k]) {
+          const found = findImageDeep(value[k], k);
+          if (found) return found;
+        }
+      }
+      for (const [k, v] of Object.entries(value)) {
+        if (/result|output|image|url|file|content|data/i.test(k) && !/reference|input|source|prompt|error|message|status|task|model/i.test(k)) {
+          const found = findImageDeep(v, k);
+          if (found) return found;
+        }
+      }
+    }
+    return "";
+  }
+  function findTaskIdDeep(value) {
+    if (!value || typeof value !== "object") return "";
+    for (const key of ["task_id", "taskId", "id", "taskID"]) {
+      if (value[key] && (typeof value[key] === "string" || typeof value[key] === "number")) return String(value[key]);
+    }
+    if (value.data && typeof value.data === "object") {
+      for (const key of ["task_id", "taskId", "id"]) {
+        if (value.data[key]) return String(value.data[key]);
+      }
+    }
+    return "";
+  }
+  function customImageValue(data, paths) { const found = customFirstValue(data, paths); if (typeof found.value === "string") { if (/^https?:\/\//i.test(found.value) || /^data:image\//i.test(found.value)) return found.value; if (/b64|base64/i.test(found.path) && found.value.length > 100) return "data:image/png;base64," + found.value; } return responseImage(data) || findImageDeep(data); }
   function customErrorMessage(data, fallback) { return data?.error?.message || data?.data?.error?.message || data?.fail_reason || data?.data?.fail_reason || data?.message || fallback; }
   function hfsyFailureMessage(data, status, taskId) { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); if (/do request failed/i.test(String(reason))) return "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason; return reason; }
   function customRequestBody(cfg, ref, overrides = {}) {
@@ -633,7 +735,7 @@
     } else {
       const tasks = [];
       for (let index = 0; index < inputRefs.length; index++) {
-        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 张异步任务。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); if (!task.value) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(task.value), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + task.value); }
+        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 张异步任务。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); const taskId = task.value || findTaskIdDeep(data); if (!taskId) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(taskId), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + taskId); }
         catch (error) { recordFailure(index, "异步提交", error); }
       }
       const successStates = new Set(cfg.successStates.split(",").map(value => value.trim().toUpperCase()).filter(Boolean));
@@ -641,7 +743,7 @@
       for (const task of tasks) {
         const startedAt = Date.now(); let complete = false;
         while (!complete && Date.now() - startedAt < 600000) {
-          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id); const state = String(customFirstValue(data, cfg.statusPaths).value || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
+          try { const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id)); const data = await customQueryRequest(cfg, joinCustomUrl(cfg.base, path), headers, task.id); const state = String(customFirstValue(data, cfg.statusPaths).value || data?.status || data?.data?.status || data?.task_status || "").toUpperCase(); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (url) { urls.push(url); log("自定义中转站：任务 " + task.id + " 已返回图片。"); complete = true; break; } if (failureStates.has(state)) throw Error(customErrorMessage(data, "状态为 " + state)); if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths); if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。"); }
           catch (error) { recordFailure(task.index, "异步查询", error); complete = true; break; }
           await sleep(2500);
         }
@@ -884,8 +986,8 @@
   function renderResults() { const grid = $("result-grid"); grid.innerHTML = ""; $("results").hidden = false; const head = $("download-all").parentElement; if (!$("replace-all")) { const b = document.createElement("button"); b.id = "replace-all"; b.className = "text-button"; b.textContent = "全部上传到店小秘"; b.onclick = replaceToDianxiaomi; head.appendChild(b); } resultUrls.forEach((url, index) => { const c = document.createElement("div"); c.className = "result-card"; const im = document.createElement("img"); im.src = url; const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.download = filename(index); a.textContent = "打开/下载"; c.append(im, a); grid.appendChild(c); }); }
   function renderHistory() { const list = $("history-list"); list.innerHTML = history.length ? history.slice().reverse().map(x => { const image = x.url ? '<img src="' + x.url + '">' : '<div class="history-placeholder">已保存图片</div>'; const link = x.url ? '<a target="_blank" href="' + x.url + '">打开</a>' : '<span class="muted">本地文件或内嵌结果</span>'; return '<div class="history-item">' + image + '<div><p>' + String(x.prompt || "").replaceAll("<", "&lt;") + '</p><time>' + new Date(x.createdAt).toLocaleString() + '</time></div>' + link + '</div>'; }).join("") : '<p class="muted">暂无生成记录</p>'; }
   async function chooseFolder() { if (!window.showDirectoryPicker) return status("当前浏览器不支持选择文件夹，无法使用本地文件夹模式。", true); try { directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" }); await persistHandle(directoryHandle); $("folder-status").textContent = "已选择本地文件夹，生成后直接保存"; status("本地文件夹已授权并持久化。"); } catch (e) { if (e.name !== "AbortError") status("选择文件夹失败：" + e.message, true); } }
-  function bind() { $("refresh").onclick = scanImages; $("rescan").onclick = scanImages; $("filter-placeholders").onchange = scanImages; $("generate").onclick = generate; $("prompt").oninput = updateButton; $("api-key").oninput = () => { updateButton(); setProviderSaveStatus("密钥已更改，请点击保存"); }; $("save-provider-config").onclick = () => saveProviderConfig(true); $("upload-custom").onclick = () => $("custom-images").click(); $("custom-images").onchange = async e => { const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); }))); customImages.push(...added); customImages = customImages.slice(-30); await persistCustomImageCache(customImages); e.target.value = ""; renderImages(); status("已添加本地参考图 " + added.length + " 张，请在列表中选择。"); }; $("choose-folder").onclick = chooseFolder; $("download-all").onclick = () => saveBatch(true); $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); }; $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); }; document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value })); $("provider").onchange = () => switchProviderConfig($("provider").value); ["custom-base-url", "custom-model", "custom-generate-path", "custom-query-path", "custom-mode"].forEach(id => $(id)?.addEventListener("input", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); })); $("custom-protocol")?.addEventListener("change", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); }); }
-  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => { const cleanedLegacy = await storageCleanupReady; s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]); if (!providerUiHydrated) { /* 当前供应商密钥由供应商专属初始化流程加载，避免异步读取覆盖 */ } $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-protocol").value = inferStoredCustomProtocol(s); $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-input-mode").value=s.customInputMode||"openai"; $("custom-provider-panel").open=$("provider").value==="custom"; installCatalogModelControl(s.customModelPreset || ""); updateCustomProviderUi(); const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls) && pending.pendingSave.urls.length){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (cleanedLegacy) log("已清理旧版本中的内嵌图片缓存，不影响正常配置与已保存的本地文件。"); if (resultUrls.length) renderResults(); bind(); updateButton(); await scanImages(); await restoreCustomImageCache(); await restoreWorkspace(); renderImages(); await readHfsyTaskState(); });
+  function bind() { $("refresh").onclick = scanImages; $("rescan").onclick = scanImages; $("filter-placeholders").onchange = scanImages; $("generate").onclick = generate; $("prompt").oninput = updateButton; $("api-key").oninput = () => { updateButton(); setProviderSaveStatus("密钥已更改，请点击保存"); }; $("save-provider-config").onclick = () => saveProviderConfig(true); $("save-custom-provider-config")?.addEventListener("click", () => saveProviderConfig(true, "custom")); $("upload-custom").onclick = () => $("custom-images").click(); $("custom-images").onchange = async e => { const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); }))); customImages.push(...added); customImages = customImages.slice(-30); await persistCustomImageCache(customImages); e.target.value = ""; renderImages(); status("已添加本地参考图 " + added.length + " 张，请在列表中选择。"); }; $("choose-folder").onclick = chooseFolder; $("download-all").onclick = () => saveBatch(true); $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); }; $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); }; document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value })); $("provider").onchange = () => switchProviderConfig($("provider").value); ["custom-base-url", "custom-model", "custom-generate-path", "custom-query-path", "custom-mode"].forEach(id => $(id)?.addEventListener("input", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); })); $("custom-protocol")?.addEventListener("change", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); }); }
+  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => { const cleanedLegacy = await storageCleanupReady; s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]); if (!providerUiHydrated) { /* 当前供应商密钥由供应商专属初始化流程加载，避免异步读取覆盖 */ } $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-protocol").value = inferStoredCustomProtocol(s); $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-input-mode").value=s.customInputMode||"openai"; if ($("custom-provider-panel")) $("custom-provider-panel").hidden = $("provider").value !== "custom"; installCatalogModelControl(s.customModelPreset || ""); updateCustomProviderUi(); const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls) && pending.pendingSave.urls.length){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (cleanedLegacy) log("已清理旧版本中的内嵌图片缓存，不影响正常配置与已保存的本地文件。"); if (resultUrls.length) renderResults(); bind(); updateButton(); await scanImages(); await restoreCustomImageCache(); await restoreWorkspace(); renderImages(); await readHfsyTaskState(); });
   pollHfsy = pollHfsySafe;
   const restoreCurrentTaskWhenReady = async () => {
     for (let attempt = 0; attempt < 40 && !workspaceHydrated; attempt++) await sleep(50);
