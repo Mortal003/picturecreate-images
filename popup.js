@@ -658,13 +658,18 @@
     const size = $("size");
     if (!size) return;
     const current = size.value;
-    if (item && Array.isArray(item.sizes) && item.sizes.length) {
-      size.innerHTML = item.sizes.map(value => '<option value="' + value + '">' + value + '</option>').join("");
-      size.value = item.sizes.includes(current) ? current : item.sizes[0];
+    size.innerHTML = DEFAULT_SIZE_HTML;
+    const exists = Array.from(size.options).some(opt => opt.value === current);
+    const is2Pro = item && (item.id === "gpt-image-2pro" || item.id === "gpt-image-2pro-4k");
+    const is1KOnly = item && (item.id === "gpt-image-2" || item.id === "gpt-image-2.5");
+    if (is2Pro && (!exists || ["1024x1024", "1K", "2K"].includes(current))) {
+      size.value = "2048x2048";
+    } else if (is1KOnly && (!exists || ["2048x2048", "4096x4096", "1K", "2K", "4K"].includes(current))) {
+      size.value = "1024x1024";
+    } else if (exists && !["1K", "2K", "4K"].includes(current)) {
+      size.value = current;
     } else {
-      size.innerHTML = DEFAULT_SIZE_HTML;
-      const exists = Array.from(size.options).some(opt => opt.value === current);
-      size.value = exists ? current : "1024x1024";
+      size.value = item?.defaultSize || "1024x1024";
     }
   }
   function installCatalogModelControl(value) {
@@ -682,7 +687,7 @@
       $("custom-mode").value = item.mode; $("custom-input-mode").value = item.inputMode;
       $("custom-task-id-path").value = item.taskIdPaths; $("custom-status-path").value = item.statusPaths;
       $("custom-result-path").value = item.resultPaths; $("custom-success-states").value = item.successStates; $("custom-failure-states").value = item.failureStates;
-      if (hint) { hint.hidden = false; hint.textContent = "单个任务最多参考图：" + item.maxReferenceImages + " 张；支持尺寸：" + item.sizes.join("、") + "。" + item.note; }
+      if (hint) { hint.hidden = false; hint.textContent = "单个任务最多参考图：" + item.maxReferenceImages + " 张；支持尺寸档位：" + item.sizes.join("、") + "。" + item.note; }
       updateCustomProviderUi();
     };
     select.onchange = async () => { update(); setProviderSaveStatus("内置模型配置已载入，请点击保存"); queueWorkspaceSave(); };
@@ -722,7 +727,7 @@
   }
   function resolvedCustomConfig(rawConfig) {
     const cfg = { ...rawConfig, protocol: resolveCustomProtocol(rawConfig), catalog: rawConfig.catalog || catalogEntry(rawConfig.model) };
-    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: "GET", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: cfg.catalog.sizes.includes($("size")?.value) ? $("size").value : cfg.catalog.sizes[0] };
+    if (cfg.catalog) return { ...cfg, base: cfg.base || cfg.catalog.base || TASK_CATALOG_BASE_URL, protocol: "hfsy-task-catalog", generatePath: cfg.catalog.generatePath, queryPath: cfg.catalog.queryPath, queryMethod: "GET", mode: cfg.catalog.mode, inputMode: cfg.catalog.inputMode, taskIdPaths: cfg.catalog.taskIdPaths, statusPaths: cfg.catalog.statusPaths, resultPaths: cfg.catalog.resultPaths, successStates: cfg.catalog.successStates, failureStates: cfg.catalog.failureStates, catalogSize: $("size")?.value || cfg.catalog.defaultSize || "1024x1024" };
     if (cfg.protocol === "hfsy-task-catalog") return { ...cfg, base: cfg.base || TASK_CATALOG_BASE_URL, generatePath: "/v1/image/create", queryPath: "/v1/image/query/{task_id}", queryMethod: "GET", mode: "async", inputMode: "reference", taskIdPaths: "id,task_id,data.task_id", statusPaths: "status,data.status,task_status,data.task_status", resultPaths: CUSTOM_RESULT_PATHS + ",images[0].url,data.images[0].url", successStates: "COMPLETED,SUCCESS,SUCCEEDED,DONE,FINISHED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED" };
     if (cfg.protocol === "agnes") return { ...cfg, generatePath: "/v1/images/generations", mode: "sync", inputMode: "openai", resultPaths: "data[0].url,data[0].b64_json", authMode: "bearer", queryMethod: "auto" };
     if (cfg.protocol === "hfsy") return { ...cfg, generatePath: "/v1/images/generations", queryPath: "/v1/images/generations/{task_id}", mode: "async", inputMode: "reference", taskIdPaths: "task_id,data.task_id,id", statusPaths: "status,data.status", resultPaths: "result_url,data.result_url," + CUSTOM_RESULT_PATHS, successStates: "SUCCESS,COMPLETED", failureStates: "FAILURE,FAILED,ERROR,CANCELLED", authMode: "bearer", queryMethod: "auto" };
@@ -789,15 +794,19 @@
     }
     if (cfg.protocol === "hfsy") { const body = { model: cfg.model, prompt, size, n: 1, response_format: "b64_json" }; if (ref) body.reference_images = [ref]; return body; }
     if (cfg.protocol === "hfsy-task-catalog") {
-      let taskSize = overrides.size || cfg.catalogSize || "1K";
-      if (cfg.catalog && Array.isArray(cfg.catalog.sizes)) {
-        if (!cfg.catalog.sizes.includes(taskSize)) {
-          taskSize = cfg.catalog.sizes[0];
-        }
+      let taskSize = overrides.size || $("size")?.value || cfg.catalog?.defaultSize || "1024x1024";
+      if (taskSize === "1K") taskSize = "1024x1024";
+      else if (taskSize === "2K") taskSize = "2048x2048";
+      else if (taskSize === "4K") taskSize = "4096x4096";
+      const to2KMap = { "1024x1024": "2048x2048", "1280x720": "2560x1440", "720x1280": "1440x2560", "768x1024": "1536x2048", "1024x768": "2048x1536" };
+      const to1KMap = { "2048x2048": "1024x1024", "2560x1440": "1280x720", "1440x2560": "720x1280", "1536x2048": "768x1024", "2048x1536": "1024x768", "4096x4096": "1024x1024", "3840x2160": "1280x720", "2160x3840": "720x1280", "3072x4096": "768x1024", "4096x3072": "1024x768" };
+      if ((cfg.model === "gpt-image-2pro" || cfg.model === "gpt-image-2pro-4k") && to2KMap[taskSize]) {
+        taskSize = to2KMap[taskSize];
+      } else if ((cfg.model === "gpt-image-2" || cfg.model === "gpt-image-2.5") && to1KMap[taskSize]) {
+        taskSize = to1KMap[taskSize];
       }
       const body = { model: cfg.model, prompt, size: taskSize };
       if (ref && /^https?:\/\//i.test(ref)) body.reference_images = [ref];
-      if (cfg.catalog?.background) body.background = cfg.catalog.background;
       return body;
     }
     const body = { model: cfg.model, prompt, size };
@@ -842,7 +851,7 @@
     if (button) button.disabled = true; if (result) { result.textContent = "正在测试…"; result.className = "custom-test-result"; }
     try {
       const cfg = resolvedCustomConfig(customConfig());
-      const testSize = cfg.protocol === "hfsy-task-catalog" ? (cfg.catalogSize || "1K") : (cfg.protocol === "agnes" ? "1K" : "1024x1024");
+      const testSize = cfg.protocol === "hfsy-task-catalog" ? (cfg.catalog?.defaultSize || "1024x1024") : (cfg.protocol === "agnes" ? "1K" : "1024x1024");
       const tested = await generateCustom(cfg, [], key, { test: true, prompt: "Create a simple blue geometric icon on a clean white background.", size: testSize });
       if (result) {
         result.textContent = tested.urls?.length ? "测试成功 · " + cfg.protocol + " · " + cfg.model : "测试未通过 · " + (tested.failures?.[0] || "没有返回图片");
