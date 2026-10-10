@@ -115,18 +115,20 @@
             <option value="hfsy">hfsyapi · GPT-image-2</option>
             <option value="custom">自定义中转站</option>
           </select></label
-        <div id="standard-key-host">
-          <label id="api-key-label"
-            >API Key <input id="api-key" type="password" placeholder="sk-…"
+        >
+        <div id="standard-provider-fields" class="standard-provider-fields">
+          <div id="provider-model-host"></div>
+          <label id="standard-api-key-label"
+            >API Key <input id="standard-api-key" type="password" placeholder="sk-…"
           /></label>
-        </div>
-        <div id="standard-save-row" class="provider-save-row">
-          <button id="save-provider-config" class="folder-button" type="button">
-            保存当前中转站配置
-          </button>
-          <span id="provider-save-status" class="provider-save-status"
-            >未保存</span
-          >
+          <div id="standard-save-row" class="provider-save-row">
+            <button id="save-provider-config" class="folder-button" type="button">
+              保存当前中转站配置
+            </button>
+            <span id="provider-save-status" class="provider-save-status"
+              >未保存</span
+            >
+          </div>
         </div>
         <div id="custom-provider-panel" class="custom-provider-panel" hidden>
           <div class="custom-model-presets">
@@ -144,6 +146,12 @@
               >Base URL<input
                 id="custom-base-url"
                 placeholder="https://api.example.com/v1" /></label
+            >
+            <label
+              >自定义 API Key<input
+                id="custom-api-key"
+                type="password"
+                placeholder="sk-…" /></label
             >
             <label
               >模型名称<input id="custom-model" value="gpt-image-2" /></label

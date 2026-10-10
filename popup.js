@@ -2,8 +2,13 @@
   document.querySelector('main.app')?.setAttribute('hidden', '');
   const licenseLoader = document.createElement('script');
   licenseLoader.src = 'license.js';
-  document.head.appendChild(licenseLoader);
-  const $ = id => document.getElementById(id);
+  const $ = id => {
+    if (id === "api-key") {
+      const p = document.getElementById("provider")?.value || activeProvider;
+      return p === "custom" ? document.getElementById("custom-api-key") : document.getElementById("standard-api-key");
+    }
+    return document.getElementById(id);
+  };
   let images = [], customImages = [], selected = new Set(), resultUrls = [], history = [], promptPresets = [], customModelPresets = [];
   let batchTasks = [], pollTimer = null, thinkingTimer = null, directoryHandle = null;
   let activeProvider = "agnes";
@@ -192,8 +197,57 @@
   }
   const storageCleanupReady = cleanupLegacyInlineImageData().catch(error => { console.warn("无法清理旧图片缓存", error); return false; });
   function providerModelOptions(provider) { if (provider === "agnes") return [["agnes-image-2.5-flash", "Agnes Image 2.5 Flash"], ["agnes-image-2.1-flash", "Agnes Image 2.1 Flash"], ["agnes-image-2.0-flash", "Agnes Image 2.0 Flash"]]; if (provider === "hfsy") return [["gpt-image-2", "GPT-image-2"], ["gpt-image-2.5", "GPT-image-2.5"]]; return []; }
-  function installProviderModelControl(provider, value) { const settings = document.querySelector(".settings"); if (!settings) return; let label = $("provider-model-control"); if (!label) { label = document.createElement("label"); label.id = "provider-model-control"; label.textContent = "模型 "; const select = document.createElement("select"); select.id = "provider-model"; label.appendChild(select); const key = $("api-key"); key?.parentElement?.insertAdjacentElement("afterend", label); select.onchange = async () => { setProviderSaveStatus("模型已更改，正在保存…"); await saveProviderConfig(false, activeProvider); setProviderSaveStatus("模型已保存：" + select.value); updateButton(); }; } const select = $("provider-model"), options = providerModelOptions(provider); const visible = options.length > 0; label.hidden = !visible; label.style.display = visible ? "" : "none"; if (!select || !visible) { updateCustomProviderUi(); return; } select.innerHTML = options.map(([id, text]) => '<option value="' + id + '">' + text + '</option>').join(""); const valid = options.some(([id]) => id === value); select.value = valid ? value : options[0][0]; updateCustomProviderUi(); }
-  async function switchProviderConfig(next) { if (!next) return; if (activeProvider && $("api-key")) await saveProviderConfig(false, activeProvider); activeProvider = next; await chrome.storage.local.set({ provider: next }); const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next), "customModelPreset"]); $("api-key").value = state[providerKeyName(next)] || ""; if (next === "custom") { lastCustomKeyValue = $("api-key").value.trim(); installCatalogModelControl(state.customModelPreset || ""); } else setCatalogSizeOptions(null); installProviderModelControl(next, state[providerModelName(next)]); if ($("custom-provider-panel")) $("custom-provider-panel").hidden = next !== "custom"; updateCustomProviderUi(); setProviderSaveStatus(maskedKey($("api-key").value)); queueWorkspaceSave(); updateButton(); }
+  function installProviderModelControl(provider, value) {
+    let label = $("provider-model-control");
+    if (!label) {
+      label = document.createElement("label");
+      label.id = "provider-model-control";
+      label.textContent = "模型 ";
+      const select = document.createElement("select");
+      select.id = "provider-model";
+      label.appendChild(select);
+      const host = $("provider-model-host") || document.querySelector(".settings");
+      host.appendChild(label);
+      select.onchange = async () => {
+        setProviderSaveStatus("模型已更改，正在保存…");
+        await saveProviderConfig(false, activeProvider);
+        setProviderSaveStatus("模型已保存：" + select.value);
+        updateButton();
+      };
+    }
+    const select = $("provider-model"), options = providerModelOptions(provider);
+    const visible = options.length > 0;
+    label.hidden = !visible;
+    label.style.display = visible ? "" : "none";
+    if (!select || !visible) { updateCustomProviderUi(); return; }
+    select.innerHTML = options.map(([id, text]) => '<option value="' + id + '">' + text + '</option>').join("");
+    const valid = options.some(([id]) => id === value);
+    select.value = valid ? value : options[0][0];
+    updateCustomProviderUi();
+  }
+  async function switchProviderConfig(next) {
+    if (!next) return;
+    if (activeProvider) await saveProviderConfig(false, activeProvider);
+    activeProvider = next;
+    await chrome.storage.local.set({ provider: next });
+    const state = await chrome.storage.local.get([providerKeyName(next), providerModelName(next), "customModelPreset", "customBaseUrl", "customModel"]);
+    const targetKey = state[providerKeyName(next)] || "";
+    if (next === "custom") {
+      if ($("custom-api-key")) $("custom-api-key").value = targetKey;
+      if ($("custom-base-url") && state.customBaseUrl) $("custom-base-url").value = state.customBaseUrl;
+      if ($("custom-model") && state.customModel) $("custom-model").value = state.customModel;
+      lastCustomKeyValue = targetKey.trim();
+      installCatalogModelControl(state.customModelPreset || "");
+    } else {
+      if ($("standard-api-key")) $("standard-api-key").value = targetKey;
+      setCatalogSizeOptions(null);
+    }
+    installProviderModelControl(next, state[providerModelName(next)]);
+    updateCustomProviderUi();
+    setProviderSaveStatus(maskedKey(targetKey));
+    queueWorkspaceSave();
+    updateButton();
+  }
   const providerAwareFetch = window.fetch;
   window.fetch = (input, init = {}) => { const url = String(input || ""); if (init.body && (activeProvider === "agnes" && /apihub\.agnes-ai\.com/.test(url) || activeProvider === "hfsy" && /hfsyapi\.cn/.test(url))) { try { const body = JSON.parse(init.body); body.model = selectedProviderModel(activeProvider); return providerAwareFetch(input, { ...init, body: JSON.stringify(body) }); } catch {} } return providerAwareFetch(input, init); };
   function saveMode() { return $("save-mode")?.value === "downloads" ? "downloads" : "local"; }
@@ -243,34 +297,22 @@
     ].join("\n");
   }
   function updateCustomProviderUi() {
-    const provider = $("provider")?.value;
+    const provider = $("provider")?.value || activeProvider;
     const isCustom = provider === "custom";
-    const keyLabel = $("api-key-label");
-    const customCore = $("custom-core-fields");
-    const standardKeyHost = $("standard-key-host");
-    const standardSaveRow = $("standard-save-row");
-    if (isCustom) {
-      if (keyLabel && customCore && keyLabel.parentElement !== customCore) {
-        customCore.insertBefore(keyLabel, $("custom-model")?.parentElement || null);
-      }
-      if (standardSaveRow) standardSaveRow.hidden = true;
-    } else {
-      if (keyLabel && standardKeyHost && keyLabel.parentElement !== standardKeyHost) {
-        standardKeyHost.appendChild(keyLabel);
-      }
-      if (standardSaveRow) standardSaveRow.hidden = false;
-    }
-    const apiKey = $("api-key");
-    if (apiKey?.parentElement) apiKey.parentElement.firstChild.nodeValue = isCustom ? "自定义 API Key " : "API Key ";
-    const panel = $("custom-provider-panel");
-    if (panel) panel.hidden = !isCustom;
+    const standardFields = $("standard-provider-fields");
+    const customPanel = $("custom-provider-panel");
+    if (standardFields) standardFields.hidden = isCustom;
+    if (customPanel) customPanel.hidden = !isCustom;
     const protocol = $("custom-protocol")?.value || "auto";
     const authHeaderRow = $("custom-auth-header-row");
     if (authHeaderRow) authHeaderRow.hidden = !isCustom || protocol !== "advanced" || ($("custom-auth-mode")?.value || "bearer") !== "custom-header";
     const hint = $("custom-protocol-hint");
     if (hint) hint.textContent = isCustom ? (customProtocolHints[protocol] || customProtocolHints.auto) : "";
     const modelControl = $("provider-model-control");
-    if (modelControl && isCustom) { modelControl.hidden = true; modelControl.style.display = "none"; }
+    if (modelControl) {
+      modelControl.hidden = isCustom;
+      modelControl.style.display = isCustom ? "none" : "";
+    }
     const summary = $("custom-config-summary");
     if (summary && isCustom) {
       const cfg = customConfig();
@@ -986,8 +1028,91 @@
   function renderResults() { const grid = $("result-grid"); grid.innerHTML = ""; $("results").hidden = false; const head = $("download-all").parentElement; if (!$("replace-all")) { const b = document.createElement("button"); b.id = "replace-all"; b.className = "text-button"; b.textContent = "全部上传到店小秘"; b.onclick = replaceToDianxiaomi; head.appendChild(b); } resultUrls.forEach((url, index) => { const c = document.createElement("div"); c.className = "result-card"; const im = document.createElement("img"); im.src = url; const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.download = filename(index); a.textContent = "打开/下载"; c.append(im, a); grid.appendChild(c); }); }
   function renderHistory() { const list = $("history-list"); list.innerHTML = history.length ? history.slice().reverse().map(x => { const image = x.url ? '<img src="' + x.url + '">' : '<div class="history-placeholder">已保存图片</div>'; const link = x.url ? '<a target="_blank" href="' + x.url + '">打开</a>' : '<span class="muted">本地文件或内嵌结果</span>'; return '<div class="history-item">' + image + '<div><p>' + String(x.prompt || "").replaceAll("<", "&lt;") + '</p><time>' + new Date(x.createdAt).toLocaleString() + '</time></div>' + link + '</div>'; }).join("") : '<p class="muted">暂无生成记录</p>'; }
   async function chooseFolder() { if (!window.showDirectoryPicker) return status("当前浏览器不支持选择文件夹，无法使用本地文件夹模式。", true); try { directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" }); await persistHandle(directoryHandle); $("folder-status").textContent = "已选择本地文件夹，生成后直接保存"; status("本地文件夹已授权并持久化。"); } catch (e) { if (e.name !== "AbortError") status("选择文件夹失败：" + e.message, true); } }
-  function bind() { $("refresh").onclick = scanImages; $("rescan").onclick = scanImages; $("filter-placeholders").onchange = scanImages; $("generate").onclick = generate; $("prompt").oninput = updateButton; $("api-key").oninput = () => { updateButton(); setProviderSaveStatus("密钥已更改，请点击保存"); }; $("save-provider-config").onclick = () => saveProviderConfig(true); $("save-custom-provider-config")?.addEventListener("click", () => saveProviderConfig(true, "custom")); $("upload-custom").onclick = () => $("custom-images").click(); $("custom-images").onchange = async e => { const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); }))); customImages.push(...added); customImages = customImages.slice(-30); await persistCustomImageCache(customImages); e.target.value = ""; renderImages(); status("已添加本地参考图 " + added.length + " 张，请在列表中选择。"); }; $("choose-folder").onclick = chooseFolder; $("download-all").onclick = () => saveBatch(true); $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); }; $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); }; document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value })); $("provider").onchange = () => switchProviderConfig($("provider").value); ["custom-base-url", "custom-model", "custom-generate-path", "custom-query-path", "custom-mode"].forEach(id => $(id)?.addEventListener("input", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); })); $("custom-protocol")?.addEventListener("change", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); }); }
-  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => { const cleanedLegacy = await storageCleanupReady; s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]); if (!providerUiHydrated) { /* 当前供应商密钥由供应商专属初始化流程加载，避免异步读取覆盖 */ } $("prompt").value = s.prompt || ""; $("filter-placeholders").checked = s.filterPlaceholders !== false; $("auto-save").checked = true; history = Array.isArray(s.history) ? s.history : []; executionLog = Array.isArray(s.executionLog) ? s.executionLog : []; resultUrls = Array.isArray(s.lastResults) ? s.lastResults : []; $("provider").value = s.provider || "agnes"; $("custom-protocol").value = inferStoredCustomProtocol(s); $("custom-base-url").value=s.customBaseUrl||""; $("custom-generate-path").value=s.customGeneratePath||"/images/generations"; $("custom-query-path").value=s.customQueryPath||"/images/generations/{task_id}"; $("custom-model").value=s.customModel||"gpt-image-2"; $("custom-mode").value=s.customMode||"sync"; $("custom-input-mode").value=s.customInputMode||"openai"; if ($("custom-provider-panel")) $("custom-provider-panel").hidden = $("provider").value !== "custom"; installCatalogModelControl(s.customModelPreset || ""); updateCustomProviderUi(); const mode = s.uploadMode || "manual"; const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]'); if (radio) radio.checked = true; await restoreHandle(); const pending=await chrome.storage.local.get("pendingSave"); if(pending.pendingSave && Array.isArray(pending.pendingSave.urls) && pending.pendingSave.urls.length){ resultUrls=pending.pendingSave.urls; log("发现未完成的保存任务，正在重试…"); await saveBatch(true); } renderHistory(); renderLog(); if (cleanedLegacy) log("已清理旧版本中的内嵌图片缓存，不影响正常配置与已保存的本地文件。"); if (resultUrls.length) renderResults(); bind(); updateButton(); await scanImages(); await restoreCustomImageCache(); await restoreWorkspace(); renderImages(); await readHfsyTaskState(); });
+  function bind() {
+    $("refresh").onclick = scanImages;
+    $("rescan").onclick = scanImages;
+    $("filter-placeholders").onchange = scanImages;
+    $("generate").onclick = generate;
+    $("prompt").oninput = updateButton;
+    ["standard-api-key", "custom-api-key"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("input", () => {
+          updateButton();
+          setProviderSaveStatus("密钥已更改，请点击保存");
+        });
+        el.addEventListener("change", () => setProviderSaveStatus("密钥已更改，请点击保存"));
+      }
+    });
+    $("save-provider-config")?.addEventListener("click", () => saveProviderConfig(true));
+    $("save-custom-provider-config")?.addEventListener("click", () => saveProviderConfig(true, "custom"));
+    $("upload-custom").onclick = () => $("custom-images").click();
+    $("custom-images").onchange = async e => {
+      const added = await Promise.all([...e.target.files].map(f => new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result));
+        r.onerror = rej;
+        r.readAsDataURL(f);
+      })));
+      customImages.push(...added);
+      customImages = customImages.slice(-30);
+      await persistCustomImageCache(customImages);
+      e.target.value = "";
+      renderImages();
+      status("已添加本地参考图 " + added.length + " 张，请在列表中选择。");
+    };
+    $("choose-folder").onclick = chooseFolder;
+    $("download-all").onclick = () => saveBatch(true);
+    $("clear-log").onclick = async () => { executionLog=[]; await chrome.storage.local.set({executionLog:[]}); renderLog(); };
+    $("clear-history").onclick = async () => { history = []; await chrome.storage.local.set({ history: [] }); renderHistory(); renderImages(); };
+    document.querySelectorAll('input[name="upload-mode"]').forEach(e => e.onchange = () => chrome.storage.local.set({ uploadMode: e.value }));
+    $("provider").onchange = () => switchProviderConfig($("provider").value);
+    ["custom-base-url", "custom-model", "custom-generate-path", "custom-query-path", "custom-mode"].forEach(id => $(id)?.addEventListener("input", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); }));
+    $("custom-protocol")?.addEventListener("change", () => { updateCustomProviderUi(); setProviderSaveStatus("配置已更改，请点击保存"); });
+    $("custom-api-key")?.addEventListener("blur", handleCustomKeyBlur);
+    $("standard-api-key")?.addEventListener("blur", () => saveProviderConfig(false, activeProvider));
+  }
+  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => {
+    const cleanedLegacy = await storageCleanupReady;
+    s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]);
+    $("prompt").value = s.prompt || "";
+    $("filter-placeholders").checked = s.filterPlaceholders !== false;
+    $("auto-save").checked = true;
+    history = Array.isArray(s.history) ? s.history : [];
+    executionLog = Array.isArray(s.executionLog) ? s.executionLog : [];
+    resultUrls = Array.isArray(s.lastResults) ? s.lastResults : [];
+    $("provider").value = s.provider || "agnes";
+    $("custom-protocol").value = inferStoredCustomProtocol(s);
+    $("custom-base-url").value = s.customBaseUrl || "";
+    $("custom-generate-path").value = s.customGeneratePath || "/images/generations";
+    $("custom-query-path").value = s.customQueryPath || "/images/generations/{task_id}";
+    $("custom-model").value = s.customModel || "gpt-image-2";
+    $("custom-mode").value = s.customMode || "sync";
+    $("custom-input-mode").value = s.customInputMode || "openai";
+    installCatalogModelControl(s.customModelPreset || "");
+    updateCustomProviderUi();
+    const mode = s.uploadMode || "manual";
+    const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]');
+    if (radio) radio.checked = true;
+    await restoreHandle();
+    const pending = await chrome.storage.local.get("pendingSave");
+    if (pending.pendingSave && Array.isArray(pending.pendingSave.urls) && pending.pendingSave.urls.length) {
+      resultUrls = pending.pendingSave.urls;
+      log("发现未完成的保存任务，正在重试…");
+      await saveBatch(true);
+    }
+    renderHistory();
+    renderLog();
+    if (cleanedLegacy) log("已清理旧版本中的内嵌图片缓存，不影响正常配置与已保存的本地文件。");
+    if (resultUrls.length) renderResults();
+    bind();
+    updateButton();
+    await scanImages();
+    await restoreCustomImageCache();
+    await restoreWorkspace();
+    renderImages();
+    await readHfsyTaskState();
+  });
   pollHfsy = pollHfsySafe;
   const restoreCurrentTaskWhenReady = async () => {
     for (let attempt = 0; attempt < 40 && !workspaceHydrated; attempt++) await sleep(50);
@@ -1022,37 +1147,41 @@
     if ($("auto-save")) { $("auto-save").checked = s.autoSave !== false; $("auto-save").onchange = () => chrome.storage.local.set({ autoSave: $("auto-save").checked }); }
     installSaveModeControl(s.saveMode === "downloads" ? "downloads" : "local");
   });
-  chrome.storage.local.get(["provider", "apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel"], s => {
+  chrome.storage.local.get(["provider", "apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel", "customBaseUrl", "customModel"], s => {
     if (providerUiHydrated) return;
     providerUiHydrated = true;
     activeProvider = s.provider || $("provider")?.value || "agnes";
     if ($("provider")) $("provider").value = activeProvider;
-    $("api-key").value = s[providerKeyName(activeProvider)] || s.apiKey || "";
-    if (activeProvider === "custom") lastCustomKeyValue = $("api-key").value.trim();
+    if ($("standard-api-key")) $("standard-api-key").value = s[providerKeyName(activeProvider)] || s.apiKey || "";
+    if ($("custom-api-key")) $("custom-api-key").value = s.apiKey_custom || "";
+    if (activeProvider === "custom") lastCustomKeyValue = ($("custom-api-key")?.value || "").trim();
     installProviderModelControl(activeProvider, s[providerModelName(activeProvider)]);
-    setProviderSaveStatus(maskedKey($("api-key").value));
+    setProviderSaveStatus(maskedKey(activeProvider === "custom" ? $("custom-api-key")?.value : $("standard-api-key")?.value));
     if ($("provider")) $("provider").onchange = () => switchProviderConfig($("provider").value);
-    $("api-key")?.addEventListener("change", () => setProviderSaveStatus("密钥已更改，请点击保存"));
+    updateCustomProviderUi();
   });
   ["prompt", "filter-placeholders"].forEach(id => $(id)?.addEventListener("change", () => { chrome.storage.local.set({ prompt: $("prompt").value, filterPlaceholders: $("filter-placeholders").checked }).catch(() => {}); queueWorkspaceSave(); }));
   const customStoredFields = { "custom-input-mode": "customInputMode", "custom-task-id-path": "customTaskIdPaths", "custom-status-path": "customStatusPaths", "custom-result-path": "customResultPaths", "custom-success-states": "customSuccessStates", "custom-failure-states": "customFailureStates" };
   chrome.storage.local.get(Object.values(customStoredFields), state => { Object.entries(customStoredFields).forEach(([id, key]) => { if (state[key] !== undefined && $(id)) $(id).value = state[key]; }); });
   Object.keys(customStoredFields).forEach(id => $(id)?.addEventListener("input", () => setProviderSaveStatus("配置已更改，请点击保存")));
   $("custom-input-mode")?.addEventListener("change", () => setProviderSaveStatus("配置已更改，请点击保存"));
-  // 初始化完成后再次从当前供应商专属键同步一次，避免并行 storage.get 回调覆盖密钥或模型。
   setTimeout(async () => {
     const provider = $("provider")?.value || activeProvider || "agnes";
-    const state = await chrome.storage.local.get([providerKeyName(provider), providerModelName(provider), "apiKey"]);
+    const state = await chrome.storage.local.get([providerKeyName(provider), providerModelName(provider), "apiKey", "apiKey_custom", "customBaseUrl", "customModel"]);
     activeProvider = provider;
-    $("api-key").value = state[providerKeyName(provider)] || (provider === "agnes" && state.apiKey ? state.apiKey : "");
-    if (provider === "custom") lastCustomKeyValue = $("api-key").value.trim();
+    if (provider === "custom") {
+      if ($("custom-api-key")) $("custom-api-key").value = state.apiKey_custom || state[providerKeyName(provider)] || "";
+      lastCustomKeyValue = ($("custom-api-key")?.value || "").trim();
+    } else {
+      if ($("standard-api-key")) $("standard-api-key").value = state[providerKeyName(provider)] || (provider === "agnes" && state.apiKey ? state.apiKey : "");
+    }
     installProviderModelControl(provider, state[providerModelName(provider)]);
-    setProviderSaveStatus(maskedKey($("api-key").value));
+    setProviderSaveStatus(maskedKey(provider === "custom" ? $("custom-api-key")?.value : $("standard-api-key")?.value));
+    updateCustomProviderUi();
     updateButton();
   }, 0);
   $("test-custom-config")?.addEventListener("click", testCustomConfig);
   $("copy-custom-ai-template")?.addEventListener("click", () => { const target = $("custom-ai-template"); if (!target) return; try { navigator.clipboard.writeText(target.value); status("已复制 AI 配置模板。"); } catch { target.focus(); target.select(); status("模板已选中，请按 Ctrl+C 复制。", true); } });
   ["custom-query-method", "custom-auth-mode", "custom-auth-header"].forEach(id => $(id)?.addEventListener("change", updateCustomProviderUi));
   chrome.storage.local.get(["customAuthMode", "customAuthHeader", "customQueryMethod"], state => { if ($("custom-auth-mode") && state.customAuthMode) $("custom-auth-mode").value = state.customAuthMode; if ($("custom-auth-header") && state.customAuthHeader) $("custom-auth-header").value = state.customAuthHeader; if ($("custom-query-method") && state.customQueryMethod) $("custom-query-method").value = state.customQueryMethod; updateCustomProviderUi(); });
-  $("api-key")?.addEventListener("blur", handleCustomKeyBlur);
 })();
