@@ -1,6 +1,7 @@
 const HFSY_POLL_ALARM = "hfsy-task-poll";
 const HFSY_GENERATE_URL = "https://www.hfsyapi.cn/v1/images/generations";
 const HFSY_QUERY_URL = "https://www.hfsyapi.cn/v1/images/generations/";
+const HFSY_TASK_QUERY_URL = "https://www.hfsyapi.cn/v1/image/query/";
 let hfsyPollPromise = null;
 const sidePanelStates = new Map();
 const remoteImageUrls = values => (Array.isArray(values) ? values : []).filter(value => typeof value === "string" && /^https?:\/\//i.test(value));
@@ -141,13 +142,15 @@ async function pollPendingHfsyTasks(message = {}) {
     for (const task of batchTasks) {
       if (task.status === "SUCCESS" || task.status === "FAILURE") continue;
       try {
-        const response = await fetch(HFSY_QUERY_URL + encodeURIComponent(task.taskId), { headers: { Authorization: "Bearer " + key } });
+        const isCatalog = task.taskId?.startsWith("task_") || task.protocol === "hfsy-task-catalog" || String(task.taskId || "").length > 20;
+        const queryUrl = (isCatalog ? HFSY_TASK_QUERY_URL : HFSY_QUERY_URL) + encodeURIComponent(task.taskId);
+        const response = await fetch(queryUrl, { headers: { Authorization: "Bearer " + key } });
         const raw = await response.text();
         let data;
         try { data = JSON.parse(raw); } catch { throw new Error("接口返回不是 JSON（" + response.status + "）"); }
         const apiError = data.error || data.data?.error;
         const imageUrl = findImage(data);
-        const stateName = String(data.status || data.data?.status || (apiError ? "FAILURE" : "")).toUpperCase();
+        const stateName = String(data.status || data.data?.status || data.task_status || (apiError ? "FAILURE" : "")).toUpperCase();
         if (imageUrl && response.ok) {
           task.status = "SUCCESS"; task.url = imageUrl; task.updatedAt = Date.now(); changed = true;
           await appendExecutionLog("任务 " + task.taskId + " 已返回图片", "info");
