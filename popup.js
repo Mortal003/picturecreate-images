@@ -944,6 +944,7 @@
     const urls = [], failures = [];
     const inputRefs = refs.length ? refs : [""];
     const recordFailure = (index, stage, error) => { const message = "第 " + (index + 1) + " 张" + stage + "失败：" + (error?.message || error); failures.push(message); log(message, "error"); };
+    const isOverloadOrTransient = err => /system cpu overloaded|cpu overloaded|overloaded|rate limit|too many requests|HTTP\s*(429|500|502|503|504)|Failed to fetch|network|busy|timeout|繁忙|过载|超载/i.test(String(err?.message || err || ""));
     if (cfg.mode === "sync") {
       for (let index = 0; index < inputRefs.length; index++) {
         try { const refCount = Array.isArray(inputRefs[index]) ? inputRefs[index].length : (inputRefs[index] ? 1 : 0); log("自定义中转站：正在请求第 " + (index + 1) + " / " + inputRefs.length + " 个同步任务" + (refCount > 1 ? "（合并 " + refCount + " 张参考图）" : "") + "。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
@@ -952,13 +953,36 @@
     } else {
       const tasks = [];
       for (let index = 0; index < inputRefs.length; index++) {
-        try { const refCount = Array.isArray(inputRefs[index]) ? inputRefs[index].length : (inputRefs[index] ? 1 : 0); log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 个异步任务" + (refCount > 1 ? "（合并 " + refCount + " 张参考图）" : "") + "。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); const taskId = task.value || findTaskIdDeep(data); if (!taskId) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(taskId), index }); log("自定义中转站：第 " + (index + 1) + " 个任务已提交，任务 ID：" + taskId); }
-        catch (error) { recordFailure(index, "异步提交", error); }
+        if (index > 0) await sleep(1000);
+        let submitError = null, submitted = false;
+        for (let attempt = 0; attempt <= 3 && !submitted; attempt++) {
+          try {
+            if (attempt > 0) {
+              log("自定义中转站：第 " + (index + 1) + " 个任务提交遇到服务器繁忙，等待 3.5 秒后第 " + attempt + "/3 次重提…", "info");
+              await sleep(3500);
+            }
+            const refCount = Array.isArray(inputRefs[index]) ? inputRefs[index].length : (inputRefs[index] ? 1 : 0);
+            log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 个异步任务" + (refCount > 1 ? "（合并 " + refCount + " 张参考图）" : "") + "。");
+            const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交");
+            const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS);
+            if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); submitted = true; break; }
+            const task = customFirstValue(data, cfg.taskIdPaths);
+            const taskId = task.value || findTaskIdDeep(data);
+            if (!taskId) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths);
+            tasks.push({ id: String(taskId), index });
+            log("自定义中转站：第 " + (index + 1) + " 个任务已提交，任务 ID：" + taskId);
+            submitted = true;
+          } catch (error) {
+            submitError = error;
+            if (!isOverloadOrTransient(error) || attempt >= 3) break;
+          }
+        }
+        if (!submitted && submitError) recordFailure(index, "异步提交", submitError);
       }
       const successStates = new Set(cfg.successStates.split(",").map(value => value.trim().toUpperCase()).filter(Boolean));
       const failureStates = new Set(cfg.failureStates.split(",").map(value => value.trim().toUpperCase()).filter(Boolean));
       for (const task of tasks) {
-        const startedAt = Date.now(); let complete = false;
+        const startedAt = Date.now(); let complete = false, queryFailCount = 0;
         while (!complete && Date.now() - startedAt < 600000) {
           try {
             const path = cfg.queryPath.replace("{task_id}", encodeURIComponent(task.id));
@@ -972,9 +996,24 @@
               throw Error(reason + hint);
             }
             if (successStates.has(state)) throw Error("任务状态为 " + state + "，但结果字段未找到图片。当前字段：" + cfg.resultPaths);
+            queryFailCount = 0;
             if (state) log("自定义中转站：任务 " + task.id + " 当前状态 " + state + "，继续等待。");
           }
-          catch (error) { recordFailure(task.index, "异步查询", error); complete = true; break; }
+          catch (error) {
+            const errMsg = String(error?.message || error || "");
+            const isOverload = isOverloadOrTransient(errMsg);
+            const maxRetries = isOverload ? 30 : 3;
+            const retryWait = isOverload ? 4000 : 3000;
+            if (queryFailCount < maxRetries) {
+              queryFailCount++;
+              log("自定义中转站：任务 " + task.id + " 查询暂未就绪（" + errMsg + "），" + (retryWait / 1000) + " 秒后进行第 " + queryFailCount + "/" + maxRetries + " 次重查询返回值…", "info");
+              await sleep(retryWait);
+              continue;
+            }
+            recordFailure(task.index, "异步查询", error);
+            complete = true;
+            break;
+          }
           await sleep(2500);
         }
         if (!complete) recordFailure(task.index, "异步查询", "等待超过 10 分钟，已停止查询。");
@@ -1488,18 +1527,18 @@
     $("custom-api-key")?.addEventListener("blur", handleCustomKeyBlur);
     $("standard-api-key")?.addEventListener("blur", () => saveProviderConfig(false, activeProvider));
   }
-  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "batchMode", "selectedSize", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => {
+  chrome.storage.local.get(["apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "batchMode", "selectedSize", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => {
     const cleanedLegacy = await storageCleanupReady;
-    s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "batchMode", "selectedSize", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]);
+    s = await chrome.storage.local.get(["apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "batchMode", "selectedSize", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]);
     $("prompt").value = s.prompt || "";
     $("filter-placeholders").checked = s.filterPlaceholders !== false;
     $("auto-save").checked = true;
     if ($("batch-mode") && (s.batchMode === "per-image" || s.batchMode === "merge-one")) $("batch-mode").value = s.batchMode;
-    if ($("size") && s.selectedSize) $("size").value = s.selectedSize;
     history = Array.isArray(s.history) ? s.history : [];
     executionLog = Array.isArray(s.executionLog) ? s.executionLog : [];
     resultUrls = Array.isArray(s.lastResults) ? s.lastResults : [];
-    $("provider").value = s.provider || "agnes";
+    activeProvider = s.provider || "agnes";
+    $("provider").value = activeProvider;
     $("custom-protocol").value = inferStoredCustomProtocol(s);
     $("custom-base-url").value = s.customBaseUrl || "";
     $("custom-generate-path").value = s.customGeneratePath || "/images/generations";
@@ -1508,6 +1547,8 @@
     $("custom-mode").value = s.customMode || "sync";
     $("custom-input-mode").value = s.customInputMode || "openai";
     installCatalogModelControl(s.customModelPreset || "");
+    installProviderModelControl(activeProvider, s[providerModelName(activeProvider)]);
+    if ($("size") && s.selectedSize && [...$("size").options].some(o => o.value === s.selectedSize)) $("size").value = s.selectedSize;
     updateCustomProviderUi();
     const mode = s.uploadMode || "manual";
     const radio = document.querySelector('input[name="upload-mode"][value="' + mode + '"]');
@@ -1565,7 +1606,7 @@
     if ($("auto-save")) { $("auto-save").checked = s.autoSave !== false; $("auto-save").onchange = () => chrome.storage.local.set({ autoSave: $("auto-save").checked }); }
     installSaveModeControl(s.saveMode === "downloads" ? "downloads" : "local");
   });
-  chrome.storage.local.get(["provider", "apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel", "customBaseUrl", "customModel"], s => {
+  chrome.storage.local.get(["provider", "apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel", "customBaseUrl", "customModel", "selectedSize"], s => {
     if (providerUiHydrated) return;
     providerUiHydrated = true;
     activeProvider = s.provider || $("provider")?.value || "agnes";
@@ -1574,6 +1615,7 @@
     if ($("custom-api-key")) $("custom-api-key").value = s.apiKey_custom || "";
     if (activeProvider === "custom") lastCustomKeyValue = ($("custom-api-key")?.value || "").trim();
     installProviderModelControl(activeProvider, s[providerModelName(activeProvider)]);
+    if ($("size") && s.selectedSize && [...$("size").options].some(o => o.value === s.selectedSize)) $("size").value = s.selectedSize;
     setProviderSaveStatus(maskedKey(activeProvider === "custom" ? $("custom-api-key")?.value : $("standard-api-key")?.value));
     if ($("provider")) $("provider").onchange = () => switchProviderConfig($("provider").value);
     updateCustomProviderUi();
@@ -1584,9 +1626,10 @@
   Object.keys(customStoredFields).forEach(id => $(id)?.addEventListener("input", () => setProviderSaveStatus("配置已更改，请点击保存")));
   $("custom-input-mode")?.addEventListener("change", () => setProviderSaveStatus("配置已更改，请点击保存"));
   setTimeout(async () => {
-    const provider = $("provider")?.value || activeProvider || "agnes";
-    const state = await chrome.storage.local.get([providerKeyName(provider), providerModelName(provider), "apiKey", "apiKey_custom", "customBaseUrl", "customModel"]);
+    const state = await chrome.storage.local.get(["provider", "apiKey", "apiKey_agnes", "apiKey_hfsy", "apiKey_custom", "agnesModel", "hfsyModel", "customBaseUrl", "customModel", "selectedSize"]);
+    const provider = state.provider || activeProvider || $("provider")?.value || "agnes";
     activeProvider = provider;
+    if ($("provider")) $("provider").value = provider;
     if (provider === "custom") {
       if ($("custom-api-key")) $("custom-api-key").value = state.apiKey_custom || state[providerKeyName(provider)] || "";
       lastCustomKeyValue = ($("custom-api-key")?.value || "").trim();
@@ -1594,6 +1637,7 @@
       if ($("standard-api-key")) $("standard-api-key").value = state[providerKeyName(provider)] || (provider === "agnes" && state.apiKey ? state.apiKey : "");
     }
     installProviderModelControl(provider, state[providerModelName(provider)]);
+    if ($("size") && state.selectedSize && [...$("size").options].some(o => o.value === state.selectedSize)) $("size").value = state.selectedSize;
     setProviderSaveStatus(maskedKey(provider === "custom" ? $("custom-api-key")?.value : $("standard-api-key")?.value));
     updateCustomProviderUi();
     updateButton();
