@@ -2,6 +2,8 @@
   document.querySelector('main.app')?.setAttribute('hidden', '');
   const licenseLoader = document.createElement('script');
   licenseLoader.src = 'license.js';
+  document.head.appendChild(licenseLoader);
+  let activeProvider = "agnes";
   const $ = id => {
     if (id === "api-key") {
       const p = document.getElementById("provider")?.value || activeProvider;
@@ -11,7 +13,6 @@
   };
   let images = [], customImages = [], selected = new Set(), resultUrls = [], history = [], promptPresets = [], customModelPresets = [];
   let batchTasks = [], pollTimer = null, thinkingTimer = null, directoryHandle = null;
-  let activeProvider = "agnes";
   let providerUiHydrated = false;
   let lastCustomKeyValue = "";
   const providerKeyName = provider => "apiKey_" + provider;
