@@ -158,7 +158,7 @@
       if (JSON.stringify(cleanHistory) !== JSON.stringify(state.history)) { update.history = cleanHistory; changed = true; }
     }
     if (Array.isArray(state.batchTasks)) {
-      const cleanTasks = state.batchTasks.map(task => { const next = { ...task }; if (!isRemoteImageUrl(next.url)) delete next.url; if (!isRemoteImageUrl(next.referenceImage)) delete next.referenceImage; return next; });
+      const cleanTasks = state.batchTasks.map(task => { const next = { ...task }; if (!isRemoteImageUrl(next.url)) delete next.url; if (!isRemoteImageUrl(next.referenceImage)) delete next.referenceImage; if (Array.isArray(next.referenceImages)) next.referenceImages = remoteImageUrls(next.referenceImages); return next; });
       if (JSON.stringify(cleanTasks) !== JSON.stringify(state.batchTasks)) { update.batchTasks = cleanTasks; changed = true; }
     }
     if (state.activeTask && typeof state.activeTask === "object") {
@@ -563,6 +563,13 @@
     renderImages();
     status("已删除第 " + (customIndex + 1) + " 张本地参考图。");
   }
+  const MAX_SELECTABLE_IMAGES = 20;
+  function activeCatalogEntry() {
+    const provider = $("provider")?.value || activeProvider || "agnes";
+    if (provider === "hfsy") return catalogEntry(selectedProviderModel("hfsy"));
+    if (provider === "custom") return catalogEntry($("custom-model")?.value.trim()) || catalogEntry($("custom-model-preset")?.value);
+    return null;
+  }
   function renderImages() {
     const grid = $("image-grid"); if (!grid) return;
     const all = refs(); grid.innerHTML = ""; $("image-count").textContent = all.length ? all.length + " 张可用" : "";
@@ -572,7 +579,7 @@
       const option = document.createElement("button"); option.type = "button"; option.className = "image-option" + (selected.has(index) ? " selected" : "") + (done.has(image.src) ? " processed" : "");
       const img = document.createElement("img"); img.src = image.src; option.appendChild(img);
       if (image.custom || done.has(image.src)) { const tag = document.createElement("span"); tag.className = "processed-badge"; tag.textContent = image.custom ? "本地" : "已处理"; b.appendChild(tag); }
-      option.onclick = () => { if (!selected.has(index) && selected.size >= 6) return status("一次最多只能选择 6 张参考图。", true); selected.has(index) ? selected.delete(index) : selected.add(index); option.classList.toggle("selected"); queueWorkspaceSave(); updateButton(); };
+      option.onclick = () => { if (!selected.has(index) && selected.size >= MAX_SELECTABLE_IMAGES) return status("一次最多可选择 " + MAX_SELECTABLE_IMAGES + " 张参考图。", true); selected.has(index) ? selected.delete(index) : selected.add(index); option.classList.toggle("selected"); queueWorkspaceSave(); updateButton(); };
       b.appendChild(option);
       if (image.custom) { const remove = document.createElement("button"); remove.type = "button"; remove.className = "remove-custom-image"; remove.textContent = "删除"; remove.title = "删除这张本地参考图"; remove.onclick = event => { event.stopPropagation(); removeCustomImage(index - images.length); }; b.appendChild(remove); }
       grid.appendChild(b);
@@ -582,17 +589,23 @@
     const hasKey = Boolean($("api-key")?.value.trim());
     const hasPrompt = Boolean($("prompt")?.value.trim());
     const count = selected.size;
+    const batchMode = $("batch-mode")?.value || "per-image";
+    const cat = activeCatalogEntry();
     if ($("generate")) $("generate").disabled = !hasKey || (!count && !hasPrompt);
     if ($("selection-note")) {
-      $("selection-note").textContent = count
-        ? "当前选择了 " + count + " 张照片（本次最多 6 张）"
-        : "未选择参考图（纯文生图模式，将直接按提示词生成 1 张图片）";
-    }
-    const batchRuleInput = document.querySelector('input[readonly][value*="选几张"], input[readonly][value*="纯文生图"]');
-    if (batchRuleInput) {
-      batchRuleInput.value = count
-        ? "选几张参考图，就生成几张结果（当前 " + count + " 张）"
-        : "纯文生图模式：根据提示词生成 1 张";
+      if (!count) {
+        $("selection-note").textContent = "未选择参考图（纯文生图模式，将直接按提示词生成 1 张图片）";
+      } else if (batchMode === "merge-one") {
+        const limitHint = cat?.maxReferenceImages
+          ? (count > cat.maxReferenceImages
+              ? "当前模型文档上限 " + cat.maxReferenceImages + " 张，可提交测试模型极限"
+              : "当前模型单任务上限 " + cat.maxReferenceImages + " 张")
+          : ("最多可选 " + MAX_SELECTABLE_IMAGES + " 张");
+        $("selection-note").textContent = "当前选择了 " + count + " 张照片 · 多图合成 1 张模式（合并提交 1 个任务；" + limitHint + "）";
+      } else {
+        const modeTip = count > 1 ? "；如需多图同时上传合成 1 张，请将下方“批量规则”切换为“多图合成 1 张”" : "";
+        $("selection-note").textContent = "当前选择了 " + count + " 张照片 · 逐张批量模式（将生成 " + count + " 张结果，最多可选 " + MAX_SELECTABLE_IMAGES + " 张" + modeTip + "）";
+      }
     }
     queueWorkspaceSave();
   }
@@ -626,51 +639,100 @@
   }
   function customValue(id, fallback = "") { return $(id)?.value.trim() || fallback; }
   function catalogEntry(model) { return (Array.isArray(window.MODEL_CATALOG) ? window.MODEL_CATALOG : []).find(item => item.id === model) || null; }
-  const DEFAULT_SIZE_HTML = [
-    '<optgroup label="1K 标清电商主图">',
-    '  <option value="1024x1024">1:1 · 1024×1024 标清正方形</option>',
-    '  <option value="1280x720">16:9 · 1280×720 横版宽屏</option>',
-    '  <option value="720x1280">9:16 · 720×1280 竖版海报</option>',
-    '  <option value="768x1024">3:4 · 768×1024 竖版主图</option>',
-    '  <option value="1024x768">4:3 · 1024×768 横版主图</option>',
-    '</optgroup>',
-    '<optgroup label="2K 高清电商主图">',
-    '  <option value="2048x2048">1:1 · 2048×2048 2K正方形</option>',
-    '  <option value="2560x1440">16:9 · 2560×1440 2K横版</option>',
-    '  <option value="1440x2560">9:16 · 1440×2560 2K竖版</option>',
-    '  <option value="1536x2048">3:4 · 1536×2048 2K竖版</option>',
-    '  <option value="2048x1536">4:3 · 2048×1536 2K横版</option>',
-    '</optgroup>',
-    '<optgroup label="4K 超清细节">',
-    '  <option value="4096x4096">1:1 · 4096×4096 4K正方形</option>',
-    '  <option value="3840x2160">16:9 · 3840×2160 4K横版</option>',
-    '  <option value="2160x3840">9:16 · 2160×3840 4K竖版</option>',
-    '  <option value="3072x4096">3:4 · 3072×4096 4K竖版</option>',
-    '  <option value="4096x3072">4:3 · 4096×3072 4K横版</option>',
-    '</optgroup>',
-    '<optgroup label="纯尺寸代号">',
-    '  <option value="1K">1K · 极简代号</option>',
-    '  <option value="2K">2K · 极简代号</option>',
-    '  <option value="4K">4K · 极简代号</option>',
-    '</optgroup>'
-  ].join("");
+  const OFFICIAL_SIZE_TIERS = {
+    "1K": {
+      label: "1K 标清标准尺寸",
+      items: [
+        { ratio: "1:1", value: "1024x1024", text: "1:1 · 1024×1024 标清正方形" },
+        { ratio: "5:4", value: "1040x832", text: "5:4 · 1040×832 标清横版" },
+        { ratio: "9:16", value: "720x1280", text: "9:16 · 720×1280 标清竖版" },
+        { ratio: "16:9", value: "1280x720", text: "16:9 · 1280×720 标清横版" },
+        { ratio: "4:3", value: "1024x768", text: "4:3 · 1024×768 标清横版" },
+        { ratio: "3:2", value: "1008x672", text: "3:2 · 1008×672 标清横版" },
+        { ratio: "4:5", value: "832x1040", text: "4:5 · 832×1040 标清竖版" },
+        { ratio: "3:4", value: "768x1024", text: "3:4 · 768×1024 标清竖版" },
+        { ratio: "2:3", value: "672x1008", text: "2:3 · 672×1008 标清竖版" },
+        { ratio: "21:9", value: "1344x576", text: "21:9 · 1344×576 标清超宽屏" }
+      ]
+    },
+    "2K": {
+      label: "2K 高清标准尺寸",
+      items: [
+        { ratio: "1:1", value: "2048x2048", text: "1:1 · 2048×2048 2K正方形" },
+        { ratio: "5:4", value: "2080x1664", text: "5:4 · 2080×1664 2K横版" },
+        { ratio: "9:16", value: "1152x2048", text: "9:16 · 1152×2048 2K竖版" },
+        { ratio: "16:9", value: "2048x1152", text: "16:9 · 2048×1152 2K横版" },
+        { ratio: "4:3", value: "2048x1536", text: "4:3 · 2048×1536 2K横版" },
+        { ratio: "3:2", value: "2016x1344", text: "3:2 · 2016×1344 2K横版" },
+        { ratio: "4:5", value: "1664x2080", text: "4:5 · 1664×2080 2K竖版" },
+        { ratio: "3:4", value: "1536x2048", text: "3:4 · 1536×2048 2K竖版" },
+        { ratio: "2:3", value: "1344x2016", text: "2:3 · 1344×2016 2K竖版" },
+        { ratio: "21:9", value: "2016x864", text: "21:9 · 2016×864 2K超宽屏" }
+      ]
+    },
+    "4K": {
+      label: "4K 超清标准尺寸",
+      items: [
+        { ratio: "1:1", value: "2880x2880", text: "1:1 · 2880×2880 4K正方形" },
+        { ratio: "5:4", value: "3200x2560", text: "5:4 · 3200×2560 4K横版" },
+        { ratio: "9:16", value: "2160x3840", text: "9:16 · 2160×3840 4K竖版" },
+        { ratio: "16:9", value: "3840x2160", text: "16:9 · 3840×2160 4K横版" },
+        { ratio: "4:3", value: "3264x2448", text: "4:3 · 3264×2448 4K横版" },
+        { ratio: "3:2", value: "3504x2336", text: "3:2 · 3504×2336 4K横版" },
+        { ratio: "4:5", value: "2560x3200", text: "4:5 · 2560×3200 4K竖版" },
+        { ratio: "3:4", value: "2448x3264", text: "3:4 · 2448×3264 4K竖版" },
+        { ratio: "2:3", value: "2336x3504", text: "2:3 · 2336×3504 4K竖版" },
+        { ratio: "21:9", value: "3696x1584", text: "21:9 · 3696×1584 4K超宽屏" }
+      ]
+    }
+  };
+  const LEGACY_SIZE_RATIO_MAP = {
+    "2560x1440": { ratio: "16:9", tier: "2K" },
+    "1440x2560": { ratio: "9:16", tier: "2K" },
+    "4096x4096": { ratio: "1:1", tier: "4K" },
+    "3072x4096": { ratio: "3:4", tier: "4K" },
+    "4096x3072": { ratio: "4:3", tier: "4K" },
+    "1K": { ratio: "1:1", tier: "1K" },
+    "2K": { ratio: "1:1", tier: "2K" },
+    "4K": { ratio: "1:1", tier: "4K" }
+  };
+  function findSizeMeta(sizeValue) {
+    for (const [tier, group] of Object.entries(OFFICIAL_SIZE_TIERS)) {
+      const found = group.items.find(entry => entry.value === sizeValue);
+      if (found) return { ratio: found.ratio, tier, value: found.value };
+    }
+    if (LEGACY_SIZE_RATIO_MAP[sizeValue]) {
+      const legacy = LEGACY_SIZE_RATIO_MAP[sizeValue];
+      const replacement = OFFICIAL_SIZE_TIERS[legacy.tier]?.items.find(entry => entry.ratio === legacy.ratio);
+      return { ratio: legacy.ratio, tier: legacy.tier, value: replacement?.value || "1024x1024" };
+    }
+    return { ratio: "1:1", tier: "1K", value: "1024x1024" };
+  }
+  function sizeToAspectRatio(sizeValue) {
+    return findSizeMeta(sizeValue).ratio || "1:1";
+  }
+  function buildOfficialSizeHtml(allowedTiers = ["1K", "2K", "4K"]) {
+    const tiers = allowedTiers.filter(tier => OFFICIAL_SIZE_TIERS[tier]);
+    const activeTiers = tiers.length ? tiers : ["1K", "2K", "4K"];
+    return activeTiers.map(tier => {
+      const group = OFFICIAL_SIZE_TIERS[tier];
+      return '<optgroup label="' + group.label + '">' + group.items.map(opt => '<option value="' + opt.value + '">' + opt.text + '</option>').join("") + '</optgroup>';
+    }).join("");
+  }
+  function resolveOfficialSizeForItem(sizeValue, item) {
+    const allowedTiers = Array.isArray(item?.sizes) && item.sizes.length ? item.sizes.filter(t => OFFICIAL_SIZE_TIERS[t]) : ["1K", "2K", "4K"];
+    const meta = findSizeMeta(sizeValue);
+    const targetTier = allowedTiers.includes(meta.tier) ? meta.tier : (allowedTiers[0] || "1K");
+    const matched = OFFICIAL_SIZE_TIERS[targetTier]?.items.find(entry => entry.ratio === meta.ratio);
+    return matched?.value || item?.defaultSize || OFFICIAL_SIZE_TIERS[targetTier]?.items[0]?.value || "1024x1024";
+  }
   function setCatalogSizeOptions(item) {
     const size = $("size");
     if (!size) return;
-    const current = size.value;
-    size.innerHTML = DEFAULT_SIZE_HTML;
-    const exists = Array.from(size.options).some(opt => opt.value === current);
-    const is2Pro = item && (item.id === "gpt-image-2pro" || item.id === "gpt-image-2pro-4k");
-    const is1KOnly = item && (item.id === "gpt-image-2" || item.id === "gpt-image-2.5");
-    if (is2Pro && (!exists || ["1024x1024", "1K", "2K"].includes(current))) {
-      size.value = "2048x2048";
-    } else if (is1KOnly && (!exists || ["2048x2048", "4096x4096", "1K", "2K", "4K"].includes(current))) {
-      size.value = "1024x1024";
-    } else if (exists && !["1K", "2K", "4K"].includes(current)) {
-      size.value = current;
-    } else {
-      size.value = item?.defaultSize || "1024x1024";
-    }
+    const current = size.value || "1024x1024";
+    const allowedTiers = Array.isArray(item?.sizes) && item.sizes.length ? item.sizes : ["1K", "2K", "4K"];
+    size.innerHTML = buildOfficialSizeHtml(allowedTiers);
+    size.value = resolveOfficialSizeForItem(current, item);
   }
   function installCatalogModelControl(value) {
     const select = $("custom-model-preset"); if (!select) return;
@@ -788,29 +850,21 @@
   function hfsyFailureMessage(data, status, taskId) { const reason = data?.fail_reason || data?.data?.fail_reason || data?.error?.message || data?.data?.error?.message || data?.message || ("中转站任务失败（" + status + "）"); if (/do request failed/i.test(String(reason))) return "hfsyapi 上游服务失败（任务 " + (taskId || "未知") + "，HTTP " + status + "，quota=0，未扣费）：" + reason; return reason; }
   function customRequestBody(cfg, ref, overrides = {}) {
     const prompt = overrides.prompt ?? $("prompt").value.trim(), size = overrides.size ?? $("size").value;
+    const refList = (Array.isArray(ref) ? ref : (ref ? [ref] : [])).filter(Boolean);
     if (cfg.protocol === "agnes") {
-      const ratio = { "1024x1024": "1:1", "1280x720": "16:9", "1024x768": "4:3", "768x1024": "3:4" };
-      const body = { model: cfg.model, prompt, size: "1K", ratio: ratio[size] || "1:1" }; if (ref) body.extra_body = { image: [ref], response_format: "url" }; return body;
+      const body = { model: cfg.model, prompt, size: "1K", ratio: sizeToAspectRatio(size) }; if (refList.length) body.extra_body = { image: refList, response_format: "url" }; return body;
     }
-    if (cfg.protocol === "hfsy") { const body = { model: cfg.model, prompt, size, n: 1, response_format: "b64_json" }; if (ref) body.reference_images = [ref]; return body; }
+    if (cfg.protocol === "hfsy") { const body = { model: cfg.model, prompt, size, n: 1, response_format: "b64_json" }; if (refList.length) body.reference_images = refList; return body; }
     if (cfg.protocol === "hfsy-task-catalog") {
-      let taskSize = overrides.size || $("size")?.value || cfg.catalog?.defaultSize || "1024x1024";
-      if (taskSize === "1K") taskSize = "1024x1024";
-      else if (taskSize === "2K") taskSize = "2048x2048";
-      else if (taskSize === "4K") taskSize = "4096x4096";
-      const to2KMap = { "1024x1024": "2048x2048", "1280x720": "2560x1440", "720x1280": "1440x2560", "768x1024": "1536x2048", "1024x768": "2048x1536" };
-      const to1KMap = { "2048x2048": "1024x1024", "2560x1440": "1280x720", "1440x2560": "720x1280", "1536x2048": "768x1024", "2048x1536": "1024x768", "4096x4096": "1024x1024", "3840x2160": "1280x720", "2160x3840": "720x1280", "3072x4096": "768x1024", "4096x3072": "1024x768" };
-      if ((cfg.model === "gpt-image-2pro" || cfg.model === "gpt-image-2pro-4k") && to2KMap[taskSize]) {
-        taskSize = to2KMap[taskSize];
-      } else if ((cfg.model === "gpt-image-2" || cfg.model === "gpt-image-2.5") && to1KMap[taskSize]) {
-        taskSize = to1KMap[taskSize];
-      }
+      const item = cfg.catalog || catalogEntry(cfg.model);
+      const taskSize = resolveOfficialSizeForItem(overrides.size || $("size")?.value || item?.defaultSize || "1024x1024", item);
       const body = { model: cfg.model, prompt, size: taskSize };
-      if (ref && /^https?:\/\//i.test(ref)) body.reference_images = [ref];
+      const remoteRefs = refList.filter(r => /^https?:\/\//i.test(r));
+      if (remoteRefs.length) body.reference_images = remoteRefs;
       return body;
     }
     const body = { model: cfg.model, prompt, size };
-    if (ref) { if (cfg.inputMode === "reference") body.reference_images = [ref]; else if (cfg.inputMode === "image") body.image = [ref]; else { body.extra_body = { image: [ref], response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = [ref]; } }
+    if (refList.length) { if (cfg.inputMode === "reference") body.reference_images = refList; else if (cfg.inputMode === "image") body.image = refList; else { body.extra_body = { image: refList, response_format: "url" }; if (cfg.inputMode === "both") body.reference_images = refList; } }
     return body;
   }
   async function customRequest(url, options, stage) {
@@ -892,13 +946,13 @@
     const recordFailure = (index, stage, error) => { const message = "第 " + (index + 1) + " 张" + stage + "失败：" + (error?.message || error); failures.push(message); log(message, "error"); };
     if (cfg.mode === "sync") {
       for (let index = 0; index < inputRefs.length; index++) {
-        try { log("自定义中转站：正在请求第 " + (index + 1) + " / " + inputRefs.length + " 张同步结果。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
+        try { const refCount = Array.isArray(inputRefs[index]) ? inputRefs[index].length : (inputRefs[index] ? 1 : 0); log("自定义中转站：正在请求第 " + (index + 1) + " / " + inputRefs.length + " 个同步任务" + (refCount > 1 ? "（合并 " + refCount + " 张参考图）" : "") + "。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "同步生成请求"); const url = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (!url) throw Error("未在结果字段中找到图片。当前字段：" + cfg.resultPaths); urls.push(url); }
         catch (error) { recordFailure(index, "同步生成", error); }
       }
     } else {
       const tasks = [];
       for (let index = 0; index < inputRefs.length; index++) {
-        try { log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 张异步任务。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); const taskId = task.value || findTaskIdDeep(data); if (!taskId) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(taskId), index }); log("自定义中转站：第 " + (index + 1) + " 张已提交，任务 ID：" + taskId); }
+        try { const refCount = Array.isArray(inputRefs[index]) ? inputRefs[index].length : (inputRefs[index] ? 1 : 0); log("自定义中转站：正在提交第 " + (index + 1) + " / " + inputRefs.length + " 个异步任务" + (refCount > 1 ? "（合并 " + refCount + " 张参考图）" : "") + "。"); const data = await customRequest(joinCustomUrl(cfg.base, cfg.generatePath), { method: "POST", headers, body: JSON.stringify(customRequestBody(cfg, inputRefs[index], options)) }, "异步任务提交"); const directUrl = customImageValue(data, cfg.resultPaths + "," + CUSTOM_RESULT_PATHS); if (directUrl) { urls.push(directUrl); log("自定义中转站：第 " + (index + 1) + " 张已直接返回图片。"); continue; } const task = customFirstValue(data, cfg.taskIdPaths); const taskId = task.value || findTaskIdDeep(data); if (!taskId) throw Error("未在任务 ID 字段中找到任务编号。当前字段：" + cfg.taskIdPaths); tasks.push({ id: String(taskId), index }); log("自定义中转站：第 " + (index + 1) + " 个任务已提交，任务 ID：" + taskId); }
         catch (error) { recordFailure(index, "异步提交", error); }
       }
       const successStates = new Set(cfg.successStates.split(",").map(value => value.trim().toUpperCase()).filter(Boolean));
@@ -962,21 +1016,26 @@
     } else {
       rs = [""];
     }
+    const batchMode = $("batch-mode")?.value || "per-image";
+    const taskUnits = (batchMode === "merge-one" && rawRefs.length > 0) ? [rs] : rs;
+    const firstRefOf = unit => Array.isArray(unit) ? (unit[0] || "") : (unit || "");
+    const refArrayOf = unit => (Array.isArray(unit) ? unit : (unit ? [unit] : [])).filter(Boolean);
     if (saveMode() === "local") { if (!directoryHandle) { const ok = confirm("尚未选择本地保存文件夹，是否现在选择？"); if (!ok) { status("未选择本地保存文件夹，已取消生成。", true); return; } await chooseFolder(); if (!directoryHandle) { status("必须选择本地保存文件夹后才能生成。", true); return; } } try { const perm = await directoryHandle.queryPermission({ mode: "readwrite" }); if (perm !== "granted") { const granted = await directoryHandle.requestPermission({ mode: "readwrite" }); if (granted !== "granted") { status("本地文件夹尚未授权，已取消生成。", true); return; } } } catch (e) { status("无法确认本地文件夹授权：" + e.message, true); return; } }
-    $("generate").disabled = true; thinking(true); resultUrls = []; batchTasks = []; currentTask = null; await writeCurrentTask({ provider, model: selectedProviderModel(provider), status: "GENERATING", startedAt: Date.now(), total: rs.length, finished: 0, resultUrls: [], resultCacheIds: [], failures: [], error: "", prompt: $("prompt").value.trim() }); queueWorkspaceSave({ status: "GENERATING" });
+    $("generate").disabled = true; thinking(true); resultUrls = []; batchTasks = []; currentTask = null; await writeCurrentTask({ provider, model: selectedProviderModel(provider), status: "GENERATING", startedAt: Date.now(), total: taskUnits.length, finished: 0, resultUrls: [], resultCacheIds: [], failures: [], error: "", prompt: $("prompt").value.trim() }); queueWorkspaceSave({ status: "GENERATING" });
     try {
       if (provider === "custom") {
-        const cfg = customConfig(); resultUrls.push(...await generateCustom(cfg, rs, key)); const customFailures = Array.isArray(generateCustom.lastFailures) ? generateCustom.lastFailures : []; batchTasks = rs.map((ref, index) => index < resultUrls.length ? ({ taskId: "custom-" + (index + 1), status: "SUCCESS", url: resultUrls[index], referenceImage: ref, imageIndex: index }) : ({ taskId: "custom-" + (index + 1), status: "FAILURE", error: customFailures[index - resultUrls.length] || "未返回图片", referenceImage: ref, imageIndex: index })); await syncCurrentTask(); setProgress(92); await finish("自定义中转站生成完成，共 " + resultUrls.length + " 张。");
+        const cfg = customConfig(); resultUrls.push(...await generateCustom(cfg, taskUnits, key)); const customFailures = Array.isArray(generateCustom.lastFailures) ? generateCustom.lastFailures : []; batchTasks = taskUnits.map((unit, index) => index < resultUrls.length ? ({ taskId: "custom-" + (index + 1), status: "SUCCESS", url: resultUrls[index], referenceImage: firstRefOf(unit), referenceImages: refArrayOf(unit), imageIndex: index }) : ({ taskId: "custom-" + (index + 1), status: "FAILURE", error: customFailures[index - resultUrls.length] || "未返回图片", referenceImage: firstRefOf(unit), referenceImages: refArrayOf(unit), imageIndex: index })); await syncCurrentTask(); setProgress(92); await finish("自定义中转站生成完成，共 " + resultUrls.length + " 张。");
       } else if (provider === "agnes") {
-        const ratio = { "1024x1024": "1:1", "1280x720": "16:9", "1024x768": "4:3", "768x1024": "3:4" }, model = selectedProviderModel("agnes");
-        for (let i = 0; i < rs.length; i++) {
+        const model = selectedProviderModel("agnes");
+        for (let i = 0; i < taskUnits.length; i++) {
+          const unitRefs = refArrayOf(taskUnits[i]);
           try {
-            const agnesBody = { model, prompt: $("prompt").value.trim(), size: "1K", ratio: ratio[$("size").value] || "1:1" };
-            if (rs[i]) agnesBody.extra_body = { image: [rs[i]], response_format: "url" };
+            const agnesBody = { model, prompt: $("prompt").value.trim(), size: "1K", ratio: sizeToAspectRatio($("size").value) };
+            if (unitRefs.length) agnesBody.extra_body = { image: unitRefs, response_format: "url" };
             else agnesBody.extra_body = { response_format: "url" };
             const data = await fetchAgnesWithRetry({ method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify(agnesBody) }, i);
-            const url = responseImage(data); if (!url) throw Error("Agnes 返回中没有图片"); resultUrls.push(url); batchTasks.push({ taskId: "agnes-" + (i + 1), status: "SUCCESS", url, referenceImage: rs[i] }); setProgress(Math.round((i + 1) / rs.length * 92)); await syncCurrentTask();
-          } catch (e) { batchTasks.push({ taskId: "agnes-" + (i + 1), status: "FAILURE", error: e.message || String(e), referenceImage: rs[i] }); log("Agnes 第 " + (i + 1) + " 张失败：" + (e.message || e), "error"); await syncCurrentTask(); }
+            const url = responseImage(data); if (!url) throw Error("Agnes 返回中没有图片"); resultUrls.push(url); batchTasks.push({ taskId: "agnes-" + (i + 1), status: "SUCCESS", url, referenceImage: firstRefOf(taskUnits[i]), referenceImages: unitRefs }); setProgress(Math.round((i + 1) / taskUnits.length * 92)); await syncCurrentTask();
+          } catch (e) { batchTasks.push({ taskId: "agnes-" + (i + 1), status: "FAILURE", error: e.message || String(e), referenceImage: firstRefOf(taskUnits[i]), referenceImages: unitRefs }); log("Agnes 第 " + (i + 1) + " 张失败：" + (e.message || e), "error"); await syncCurrentTask(); }
         }
         if (resultUrls.length) await finish("Agnes 生成完成，共 " + resultUrls.length + " 张。"); else throw Error("Agnes 没有成功返回图片，请查看执行日志。");
       } else {
@@ -984,37 +1043,38 @@
         const catalog = catalogEntry(model);
         if (catalog) {
           const cfg = resolvedCustomConfig({ base: TASK_CATALOG_BASE_URL, model, catalog, protocol: "hfsy-task-catalog" });
-          resultUrls.push(...await generateCustom(cfg, rs, key));
+          resultUrls.push(...await generateCustom(cfg, taskUnits, key));
           const customFailures = Array.isArray(generateCustom.lastFailures) ? generateCustom.lastFailures : [];
-          batchTasks = rs.map((ref, index) => index < resultUrls.length ? ({ taskId: "hfsy-" + (index + 1), status: "SUCCESS", url: resultUrls[index], referenceImage: ref, imageIndex: index }) : ({ taskId: "hfsy-" + (index + 1), status: "FAILURE", error: customFailures[index - resultUrls.length] || "未返回图片", referenceImage: ref, imageIndex: index }));
+          batchTasks = taskUnits.map((unit, index) => index < resultUrls.length ? ({ taskId: "hfsy-" + (index + 1), status: "SUCCESS", url: resultUrls[index], referenceImage: firstRefOf(unit), referenceImages: refArrayOf(unit), imageIndex: index }) : ({ taskId: "hfsy-" + (index + 1), status: "FAILURE", error: customFailures[index - resultUrls.length] || "未返回图片", referenceImage: firstRefOf(unit), referenceImages: refArrayOf(unit), imageIndex: index }));
           await syncCurrentTask();
           setProgress(92);
           await finish("hfsyapi 官方模型生成完成，共 " + resultUrls.length + " 张。");
         } else {
           const tasks = [], startedAt = Date.now();
           let backgroundStarted = false;
-          await persistHfsySubmissionSnapshot(startedAt, model, rs.length);
-          for (let i = 0; i < rs.length; i++) {
+          await persistHfsySubmissionSnapshot(startedAt, model, taskUnits.length);
+          for (let i = 0; i < taskUnits.length; i++) {
+            const unitRefs = refArrayOf(taskUnits[i]);
             try {
               const hfsyBody = { model, prompt: $("prompt").value.trim(), size: $("size").value, response_format: "b64_json", n: 1 };
-              if (rs[i]) hfsyBody.reference_images = [rs[i]];
+              if (unitRefs.length) hfsyBody.reference_images = unitRefs;
               const response = await fetch("https://www.hfsyapi.cn/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify(hfsyBody) });
               const raw = await response.text(); let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
               const direct = responseImage(data);
-              if (response.ok && direct) { resultUrls.push(direct); batchTasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: "direct-" + (i + 1), status: "SUCCESS", url: direct, referenceImage: rs[i] }); await persistHfsySubmissionSnapshot(startedAt, model, rs.length); log("hfsyapi 第 " + (i + 1) + " 张已直接返回图片。"); await syncCurrentTask(); continue; }
+              if (response.ok && direct) { resultUrls.push(direct); batchTasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: "direct-" + (i + 1), status: "SUCCESS", url: direct, referenceImage: firstRefOf(taskUnits[i]), referenceImages: unitRefs }); await persistHfsySubmissionSnapshot(startedAt, model, taskUnits.length); log("hfsyapi 第 " + (i + 1) + " 张已直接返回图片。"); await syncCurrentTask(); continue; }
               if (!response.ok) throw Error(data.error?.message || data.message || "提交任务失败（HTTP " + response.status + "）");
               const id = data.task_id || data.id || data.data?.task_id; if (!id) throw Error("接口未返回 task_id 或图片结果");
-              tasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: String(id), status: "QUEUED", referenceImage: rs[i] });
+              tasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: String(id), status: "QUEUED", referenceImage: firstRefOf(taskUnits[i]), referenceImages: unitRefs });
               batchTasks.push(tasks[tasks.length - 1]);
-              await persistHfsySubmissionSnapshot(startedAt, model, rs.length);
+              await persistHfsySubmissionSnapshot(startedAt, model, taskUnits.length);
               if (!backgroundStarted) {
                 backgroundStarted = true;
                 chrome.runtime.sendMessage({ type: "START_HFSY_POLL", apiKey: key }).catch(error => log("后台轮询接管启动失败：" + (error?.message || error), "error"));
               }
-            } catch (e) { const msg = e.message || "提交任务异常"; batchTasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: "submit-" + (i + 1), status: "FAILURE", error: msg, referenceImage: rs[i] }); await persistHfsySubmissionSnapshot(startedAt, model, rs.length); log("hfsyapi 第 " + (i + 1) + " 张失败：" + msg, "error"); await syncCurrentTask(); }
+            } catch (e) { const msg = e.message || "提交任务异常"; batchTasks.push({ provider: "hfsy", imageIndex: i, updatedAt: Date.now(), taskId: "submit-" + (i + 1), status: "FAILURE", error: msg, referenceImage: firstRefOf(taskUnits[i]), referenceImages: unitRefs }); await persistHfsySubmissionSnapshot(startedAt, model, taskUnits.length); log("hfsyapi 第 " + (i + 1) + " 张失败：" + msg, "error"); await syncCurrentTask(); }
           }
           batchTasks = batchTasks.filter((task, index, list) => list.findIndex(item => item.taskId === task.taskId) === index);
-          if (tasks.length) { await chrome.storage.local.set({ activeTask: { batch: true, provider: "hfsy", model, total: rs.length, startedAt, updatedAt: Date.now(), status: "POLLING", resultUrls: remoteImageUrls(resultUrls) }, batchTasks }); await syncCurrentTask("POLLING"); queueWorkspaceSave({ status: "POLLING" }); await pollHfsy(key); }
+          if (tasks.length) { await chrome.storage.local.set({ activeTask: { batch: true, provider: "hfsy", model, total: taskUnits.length, startedAt, updatedAt: Date.now(), status: "POLLING", resultUrls: remoteImageUrls(resultUrls) }, batchTasks }); await syncCurrentTask("POLLING"); queueWorkspaceSave({ status: "POLLING" }); await pollHfsy(key); }
           else if (resultUrls.length) await finish("hfsyapi 生成完成，共 " + resultUrls.length + " 张。");
           else throw Error("hfsyapi 没有成功返回图片，请查看执行日志。");
         }
@@ -1144,7 +1204,7 @@
     const current = await chrome.storage.local.get('lastHistoryBatchSignature');
     if (current.lastHistoryBatchSignature === signature) return;
     const now = Date.now();
-    const refsUsed = selectedRefs().length ? remoteImageUrls(selectedRefs()) : remoteImageUrls([...new Set(batchTasks.map(t => t.referenceImage).filter(Boolean))]);
+    const refsUsed = selectedRefs().length ? remoteImageUrls(selectedRefs()) : remoteImageUrls([...new Set(batchTasks.flatMap(t => Array.isArray(t.referenceImages) ? t.referenceImages : [t.referenceImage]).filter(Boolean))]);
     const promptText = $("prompt")?.value.trim() || "";
     const entries = persistableUrls.map((url, index) => ({
       id: now + '-' + index,
@@ -1208,6 +1268,14 @@
     $("filter-placeholders").onchange = scanImages;
     $("generate").onclick = generate;
     $("prompt").oninput = updateButton;
+    $("batch-mode")?.addEventListener("change", () => {
+      chrome.storage.local.set({ batchMode: $("batch-mode").value }).catch(() => {});
+      updateButton();
+    });
+    $("size")?.addEventListener("change", () => {
+      chrome.storage.local.set({ selectedSize: $("size").value }).catch(() => {});
+      queueWorkspaceSave();
+    });
     ["standard-api-key", "custom-api-key"].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -1246,12 +1314,14 @@
     $("custom-api-key")?.addEventListener("blur", handleCustomKeyBlur);
     $("standard-api-key")?.addEventListener("blur", () => saveProviderConfig(false, activeProvider));
   }
-  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => {
+  chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "batchMode", "selectedSize", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"], async s => {
     const cleanedLegacy = await storageCleanupReady;
-    s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]);
+    s = await chrome.storage.local.get(["apiKey", "prompt", "filterPlaceholders", "autoSave", "history", "lastResults", "provider", "uploadMode", "batchMode", "selectedSize", "executionLog", "customProtocol", "customBaseUrl", "customGeneratePath", "customQueryPath", "customModel", "customModelPreset", "customMode", "customInputMode", "customTaskIdPaths", "customStatusPaths", "customResultPaths", "customSuccessStates", "customFailureStates", "activeTask", "batchTasks"]);
     $("prompt").value = s.prompt || "";
     $("filter-placeholders").checked = s.filterPlaceholders !== false;
     $("auto-save").checked = true;
+    if ($("batch-mode") && (s.batchMode === "per-image" || s.batchMode === "merge-one")) $("batch-mode").value = s.batchMode;
+    if ($("size") && s.selectedSize) $("size").value = s.selectedSize;
     history = Array.isArray(s.history) ? s.history : [];
     executionLog = Array.isArray(s.executionLog) ? s.executionLog : [];
     resultUrls = Array.isArray(s.lastResults) ? s.lastResults : [];

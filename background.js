@@ -20,12 +20,18 @@ async function parseResponse(response) {
   return data;
 }
 
+const OFFICIAL_RATIO_MAP = {
+  "1024x1024": "1:1", "1040x832": "5:4", "720x1280": "9:16", "1280x720": "16:9", "1024x768": "4:3", "1008x672": "3:2", "832x1040": "4:5", "768x1024": "3:4", "672x1008": "2:3", "1344x576": "21:9",
+  "2048x2048": "1:1", "2080x1664": "5:4", "1152x2048": "9:16", "2048x1152": "16:9", "2048x1536": "4:3", "2016x1344": "3:2", "1664x2080": "4:5", "1536x2048": "3:4", "1344x2016": "2:3", "2016x864": "21:9",
+  "2880x2880": "1:1", "3200x2560": "5:4", "2160x3840": "9:16", "3840x2160": "16:9", "3264x2448": "4:3", "3504x2336": "3:2", "2560x3200": "4:5", "2448x3264": "3:4", "2336x3504": "2:3", "3696x1584": "21:9"
+};
+
 async function generateAgnes(message) {
   const refs = message.referenceImages || [];
-  const ratioMap = { "1024x1024":"1:1", "1040x832":"5:4", "720x1280":"9:16", "1280x720":"16:9", "1024x768":"4:3", "1008x672":"3:2", "832x1040":"4:5", "768x1024":"3:4", "672x1008":"2:3", "1344x576":"21:9" };
   const urls = [];
   for (const ref of refs) {
-    const data = await parseResponse(await fetch("https://apihub.agnes-ai.com/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: ratioMap[message.size] || "1:1", extra_body: { image: [ref], response_format: "url" } }) }));
+    const imgList = (Array.isArray(ref) ? ref : (ref ? [ref] : [])).filter(Boolean);
+    const data = await parseResponse(await fetch("https://apihub.agnes-ai.com/v1/images/generations", { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: OFFICIAL_RATIO_MAP[message.size] || "1:1", extra_body: imgList.length ? { image: imgList, response_format: "url" } : { response_format: "url" } }) }));
     const url = data.data?.[0]?.url || data.data?.[0]?.b64_json;
     if (!url) throw new Error("Agnes 返回中没有图片 URL");
     urls.push(url);
@@ -35,9 +41,8 @@ async function generateAgnes(message) {
 
 async function runAgnesTask(message) {
   const refs = Array.isArray(message.referenceImages) ? message.referenceImages : [];
-  const ratioMap = { "1024x1024":"1:1", "1040x832":"5:4", "720x1280":"9:16", "1280x720":"16:9", "1024x768":"4:3", "1008x672":"3:2", "832x1040":"4:5", "768x1024":"3:4", "672x1008":"2:3", "1344x576":"21:9" };
   const startedAt = Date.now();
-  const batchTasks = refs.map((referenceImage, imageIndex) => ({ provider: "agnes", imageIndex, taskId: "agnes-" + (imageIndex + 1), status: "QUEUED", referenceImage, updatedAt: startedAt }));
+  const batchTasks = refs.map((referenceImage, imageIndex) => ({ provider: "agnes", imageIndex, taskId: "agnes-" + (imageIndex + 1), status: "QUEUED", referenceImage: Array.isArray(referenceImage) ? (referenceImage[0] || "") : referenceImage, referenceImages: Array.isArray(referenceImage) ? referenceImage : (referenceImage ? [referenceImage] : []), updatedAt: startedAt }));
   const saveState = async (status, resultUrls = []) => {
     const succeeded = batchTasks.filter(task => task.status === "SUCCESS").length;
     const failed = batchTasks.filter(task => task.status === "FAILURE").length;
@@ -49,7 +54,8 @@ async function runAgnesTask(message) {
   const urls = [];
   for (const task of batchTasks) {
     task.status = "SUBMITTING"; task.updatedAt = Date.now(); await saveState("PROCESSING", urls);
-    const options = () => ({ method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: ratioMap[message.size] || "1:1", extra_body: { image: [task.referenceImage], response_format: "url" } }) });
+    const imgList = Array.isArray(task.referenceImages) && task.referenceImages.length ? task.referenceImages : (task.referenceImage ? [task.referenceImage] : []);
+    const options = () => ({ method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "agnes-image-2.5-flash", prompt: message.prompt, size: "1K", ratio: OFFICIAL_RATIO_MAP[message.size] || "1:1", extra_body: imgList.length ? { image: imgList, response_format: "url" } : { response_format: "url" } }) });
     let data = null; let lastError = null;
     for (const wait of [0, 5000, 10000, 20000]) {
       if (wait) await new Promise(resolve => setTimeout(resolve, wait));
@@ -68,7 +74,8 @@ async function runAgnesTask(message) {
 async function generateHfsy(message) {
   const tasks = [];
   for (const ref of message.referenceImages || []) {
-    const data = await parseResponse(await fetch(HFSY_GENERATE_URL, { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "gpt-image-2", prompt: message.prompt, size: message.size, response_format: "b64_json", reference_images: [ref], n: 1 }) }));
+    const imgList = (Array.isArray(ref) ? ref : (ref ? [ref] : [])).filter(Boolean);
+    const data = await parseResponse(await fetch(HFSY_GENERATE_URL, { method: "POST", headers: { Authorization: "Bearer " + message.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ model: message.model || "gpt-image-2", prompt: message.prompt, size: message.size, response_format: "b64_json", reference_images: imgList, n: 1 }) }));
     const direct = findImage(data);
     if (direct) { tasks.push({ direct }); continue; }
     const id = data.task_id || data.id || data.data?.task_id;
